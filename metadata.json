@@ -1,0 +1,7 @@
+{
+  "name": "MercadoMaster ERP & PDV",
+  "description": "Sistema ERP completo com PDV estilo supermercado, suporte offline e integração com IA Gemini para análise de vendas.",
+  "requestFramePermissions": [
+    "camera"
+  ]
+}
