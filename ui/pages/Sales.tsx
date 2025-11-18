@@ -1,7 +1,7 @@
 
 import React, { useEffect, useState } from 'react';
-import { db } from '../services/db';
-import { Sale } from '../types';
+import { db } from '../../infra/db';
+import { Sale } from '../../core/types';
 import { Calendar, CreditCard, Search, Receipt, CheckCircle } from 'lucide-react';
 
 export const Sales: React.FC = () => {
@@ -21,7 +21,6 @@ export const Sales: React.FC = () => {
 
   return (
     <div className="flex h-[calc(100vh-140px)] gap-6">
-      {/* Lista de Vendas */}
       <div className="w-1/2 flex flex-col space-y-4">
         <h2 className="text-2xl font-bold text-slate-800">Vendas Realizadas</h2>
         <div className="bg-white rounded-xl border border-slate-200 flex-1 overflow-hidden flex flex-col shadow-sm">
@@ -72,11 +71,9 @@ export const Sales: React.FC = () => {
         </div>
       </div>
 
-      {/* Detalhes da Venda (Cupom) */}
       <div className="w-1/2 bg-white rounded-xl border border-slate-200 p-8 shadow-sm overflow-y-auto flex flex-col items-center bg-slate-50">
         {selectedSale ? (
             <div className="w-full max-w-sm bg-white shadow-xl p-6 font-mono text-sm relative">
-                {/* Recibo Style Border */}
                 <div className="absolute top-0 left-0 w-full h-2 bg-[linear-gradient(45deg,transparent_25%,#e2e8f0_25%,#e2e8f0_50%,transparent_50%,transparent_75%,#e2e8f0_75%,#e2e8f0_100%)] bg-[length:10px_10px]"></div>
 
                 <div className="text-center border-b border-dashed border-slate-300 pb-4 mb-4 mt-2">
@@ -125,7 +122,6 @@ export const Sales: React.FC = () => {
                     <p className="mt-4 font-bold">OBRIGADO PELA PREFERÊNCIA!</p>
                 </div>
 
-                 {/* Recibo Style Border Bottom */}
                  <div className="absolute bottom-0 left-0 w-full h-2 bg-[linear-gradient(45deg,transparent_25%,#e2e8f0_25%,#e2e8f0_50%,transparent_50%,transparent_75%,#e2e8f0_75%,#e2e8f0_100%)] bg-[length:10px_10px]"></div>
             </div>
         ) : (

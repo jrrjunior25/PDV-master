@@ -1,7 +1,7 @@
 
 import React, { useEffect, useState } from 'react';
-import { db } from '../services/db';
-import { FinancialRecord } from '../types';
+import { db } from '../../infra/db';
+import { FinancialRecord } from '../../core/types';
 import { Plus, TrendingUp, TrendingDown, DollarSign, Trash2 } from 'lucide-react';
 
 export const Financial: React.FC = () => {

@@ -1,9 +1,8 @@
 
-import { AppSettings, CartItem, PaymentMethod } from "../types";
+import { AppSettings, CartItem, PaymentMethod } from "../../core/types";
 
 export class NfcService {
   
-  // Tabela de Códigos de UF (IBGE) simplificada
   private getUfCode(state: string): string {
     const map: {[key: string]: string} = {
       'RO': '11', 'AC': '12', 'AM': '13', 'RR': '14', 'PA': '15', 'AP': '16', 'TO': '17',
@@ -11,11 +10,9 @@ export class NfcService {
       'MG': '31', 'ES': '32', 'RJ': '33', 'SP': '35', 'PR': '41', 'SC': '42', 'RS': '43',
       'MS': '50', 'MT': '51', 'GO': '52', 'DF': '53'
     };
-    // Tenta extrair do endereço ou Default SP
     return map[state?.toUpperCase()] || '35'; 
   }
 
-  // Algoritmo Módulo 11 para Dígito Verificador
   private calculateAccessKeyDV(keyWithoutDV: string): string {
     let sum = 0;
     let weight = 2;
@@ -34,22 +31,19 @@ export class NfcService {
   }
 
   private formatDate(date: Date): string {
-    return date.toISOString().split('.')[0] + '-03:00'; // Formato SEFAZ: YYYY-MM-DDThh:mm:ssTZD
+    return date.toISOString().split('.')[0] + '-03:00';
   }
 
-  // Gera a Chave de Acesso de 44 dígitos
   public generateAccessKey(settings: AppSettings, nNF: number): string {
-    // Formato: UF(2) + AAMM(4) + CNPJ(14) + Mod(2) + Serie(3) + nNF(9) + tpEmis(1) + cNF(8) + DV(1)
-    
-    const uf = this.getUfCode(settings.address?.slice(-2) || 'SP'); // Pega os ultimos 2 chars do endereço
+    const uf = this.getUfCode(settings.address?.slice(-2) || 'SP');
     const now = new Date();
     const aamm = now.getFullYear().toString().slice(2) + (now.getMonth() + 1).toString().padStart(2, '0');
     const cnpj = settings.cnpj.replace(/\D/g, '').padStart(14, '0');
-    const mod = '65'; // NFC-e
+    const mod = '65';
     const serie = settings.nfcSeries.toString().padStart(3, '0');
     const nNfStr = nNF.toString().padStart(9, '0');
-    const tpEmis = '1'; // Normal
-    const cNf = this.generateRandomCode(); // Código numérico aleatório
+    const tpEmis = '1';
+    const cNf = this.generateRandomCode();
 
     const keyBase = `${uf}${aamm}${cnpj}${mod}${serie}${nNfStr}${tpEmis}${cNf}`;
     const dv = this.calculateAccessKeyDV(keyBase);
@@ -69,7 +63,6 @@ export class NfcService {
     const dateStr = this.formatDate(now);
     const ufCode = this.getUfCode(settings.address?.slice(-2) || 'SP');
 
-    // Montagem dos Itens
     const detItems = cart.map((item, index) => `
         <det nItem="${index + 1}">
             <prod>
@@ -115,7 +108,6 @@ export class NfcService {
         </det>
     `).join('');
 
-    // Pagamento Map
     const payMap: {[key: string]: string} = {
         'DINHEIRO': '01',
         'CREDITO': '03',
@@ -205,7 +197,6 @@ export class NfcService {
     </infNFe>
     <Signature xmlns="http://www.w3.org/2000/09/xmldsig#">
         <SignedInfo>
-             <!-- Simulação de Assinatura Digital (Limitação de Browser) -->
             <CanonicalizationMethod Algorithm="http://www.w3.org/TR/2001/REC-xml-c14n-20010315" />
             <SignatureMethod Algorithm="http://www.w3.org/2000/09/xmldsig#rsa-sha1" />
             <Reference URI="#NFe${accessKey}">
@@ -218,12 +209,8 @@ export class NfcService {
 </NFe>`;
   }
 
-  // Simula o envio para a SEFAZ e retorna o Protocolo
   public async transmitNFCe(xml: string, settings: AppSettings): Promise<{ success: boolean, protocol: string, message: string }> {
     return new Promise((resolve) => {
-      // Em um ambiente real Backend, aqui seria feito o POST SOAP para o webservice da SEFAZ
-      // Como estamos no browser, simulamos a latência e resposta de sucesso.
-      
       setTimeout(() => {
         if (settings.environment === 'HOMOLOGACAO') {
             const protocolo = `135${new Date().getFullYear()}${Math.floor(Math.random() * 1000000000)}`;
@@ -233,7 +220,6 @@ export class NfcService {
                 message: 'Autorizado o uso da NF-e'
             });
         } else {
-            // Produção - Simulado para demo
              const protocolo = `135${new Date().getFullYear()}${Math.floor(Math.random() * 1000000000)}`;
              resolve({
                 success: true,

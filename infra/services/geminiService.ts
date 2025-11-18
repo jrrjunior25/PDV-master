@@ -1,5 +1,6 @@
+
 import { GoogleGenAI } from "@google/genai";
-import { Sale, Product } from "../types";
+import { Sale, Product } from "../../core/types";
 
 const apiKey = process.env.API_KEY || ''; 
 
@@ -12,7 +13,6 @@ export const geminiService = {
     try {
       const ai = new GoogleGenAI({ apiKey });
       
-      // Prepare a summary to save tokens
       const salesSummary = sales.slice(-50).map(s => ({
         total: s.total,
         method: s.paymentMethod,

@@ -1,6 +1,7 @@
+
 import React, { useEffect, useState, useRef } from 'react';
-import { db } from '../services/db';
-import { AppSettings } from '../types';
+import { db } from '../../infra/db';
+import { AppSettings } from '../../core/types';
 import { Save, Upload, Download, Server, FileCheck, CreditCard, Printer, Store, CheckCircle, Key } from 'lucide-react';
 
 export const SettingsPage: React.FC = () => {
@@ -92,7 +93,6 @@ export const SettingsPage: React.FC = () => {
         )}
       </div>
 
-      {/* Tabs */}
       <div className="flex border-b border-slate-200">
         <button 
           onClick={() => setActiveTab('GERAL')}
@@ -120,10 +120,8 @@ export const SettingsPage: React.FC = () => {
         </button>
       </div>
 
-      {/* Content */}
       <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-8">
         
-        {/* TAB GERAL */}
         {activeTab === 'GERAL' && (
           <div className="space-y-8 animate-fade-in">
             <div>
@@ -199,7 +197,6 @@ export const SettingsPage: React.FC = () => {
           </div>
         )}
 
-        {/* TAB FISCAL */}
         {activeTab === 'FISCAL' && (
            <div className="space-y-8 animate-fade-in">
               <div>
@@ -332,7 +329,6 @@ export const SettingsPage: React.FC = () => {
            </div>
         )}
 
-        {/* TAB BACKUP */}
         {activeTab === 'BACKUP' && (
            <div className="space-y-8 animate-fade-in">
                 <div className="bg-blue-50 border border-blue-100 rounded-lg p-6">

@@ -1,4 +1,3 @@
-
 import React, { useEffect, useState } from 'react';
 import { HashRouter, Routes, Route, Navigate, useNavigate } from 'react-router-dom';
 import { Layout } from './components/Layout';
@@ -12,10 +11,9 @@ import { Reports } from './pages/Reports';
 import { SettingsPage } from './pages/Settings';
 import { Clients } from './pages/Clients';
 import { Login } from './pages/Login';
-import { db } from './services/db';
-import { User } from './types';
+import { db } from '../infra/db';
+import { User } from '../core/types';
 
-// Componente de Rota Protegida
 const ProtectedRoute = ({ children, allowedRoles }: { children: React.ReactNode, allowedRoles?: string[] }) => {
     const user = db.auth.getSession();
     
@@ -24,26 +22,26 @@ const ProtectedRoute = ({ children, allowedRoles }: { children: React.ReactNode,
     }
 
     if (allowedRoles && !allowedRoles.includes(user.role)) {
-        // Se for operador tentando acessar admin, joga pro PDV
         if (user.role === 'OPERADOR') return <Navigate to="/pdv" replace />;
-        // Se for admin, vai pro dashboard
         return <Navigate to="/" replace />;
     }
 
     return <>{children}</>;
 };
 
-// Wrapper principal para usar hooks de navegação
 const AppContent: React.FC = () => {
   const [currentUser, setCurrentUser] = useState<User | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const navigate = useNavigate();
 
   useEffect(() => {
-    db.init();
-    const session = db.auth.getSession();
-    setCurrentUser(session);
-    setIsLoading(false);
+    const initializeSystem = async () => {
+        await db.init();
+        const session = db.auth.getSession();
+        setCurrentUser(session);
+        setIsLoading(false);
+    };
+    initializeSystem();
   }, []);
 
   const handleLoginSuccess = () => {
@@ -56,7 +54,7 @@ const AppContent: React.FC = () => {
     }
   };
 
-  if (isLoading) return <div className="flex h-screen items-center justify-center bg-slate-900 text-white">Carregando Sistema...</div>;
+  if (isLoading) return <div className="flex h-screen items-center justify-center bg-slate-900 text-white animate-pulse">Carregando Sistema e Banco de Dados...</div>;
 
   return (
     <Layout>
@@ -65,7 +63,6 @@ const AppContent: React.FC = () => {
              currentUser ? <Navigate to={currentUser.role === 'ADMIN' ? '/' : '/pdv'} /> : <Login onLogin={handleLoginSuccess} />
           } />
           
-          {/* Rotas de Admin (ERP) */}
           <Route path="/" element={<ProtectedRoute allowedRoles={['ADMIN']}><Dashboard /></ProtectedRoute>} />
           <Route path="/products" element={<ProtectedRoute allowedRoles={['ADMIN']}><Products /></ProtectedRoute>} />
           <Route path="/sales" element={<ProtectedRoute allowedRoles={['ADMIN']}><Sales /></ProtectedRoute>} />
@@ -75,7 +72,6 @@ const AppContent: React.FC = () => {
           <Route path="/reports" element={<ProtectedRoute allowedRoles={['ADMIN']}><Reports /></ProtectedRoute>} />
           <Route path="/settings" element={<ProtectedRoute allowedRoles={['ADMIN']}><SettingsPage /></ProtectedRoute>} />
 
-          {/* Rota do PDV (Acessível por Admin e Operador) */}
           <Route path="/pdv" element={<ProtectedRoute allowedRoles={['ADMIN', 'OPERADOR']}><POS /></ProtectedRoute>} />
           
           <Route path="*" element={<Navigate to="/" replace />} />

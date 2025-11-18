@@ -1,7 +1,7 @@
 
 import React, { useEffect, useState } from 'react';
-import { db } from '../services/db';
-import { Sale } from '../types';
+import { db } from '../../infra/db';
+import { Sale } from '../../core/types';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, PieChart, Pie, Cell } from 'recharts';
 
 const COLORS = ['#0088FE', '#00C49F', '#FFBB28', '#FF8042', '#8884d8', '#82ca9d'];
@@ -13,7 +13,6 @@ export const Reports: React.FC = () => {
     setSales(db.getSales());
   }, []);
 
-  // Dados por Categoria
   const salesByCategory = sales.reduce((acc: any, sale) => {
       sale.items.forEach(item => {
           if(!acc[item.category]) acc[item.category] = 0;
@@ -27,7 +26,6 @@ export const Reports: React.FC = () => {
       value: salesByCategory[key]
   }));
 
-  // Dados por Método de Pagamento
   const salesByMethod = sales.reduce((acc: any, sale) => {
       if(!acc[sale.paymentMethod]) acc[sale.paymentMethod] = 0;
       acc[sale.paymentMethod] += sale.total;
@@ -47,7 +45,6 @@ export const Reports: React.FC = () => {
         </div>
 
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-            {/* Gráfico de Barras */}
             <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200 h-96 flex flex-col">
                 <h3 className="font-bold text-slate-700 mb-6">Vendas por Categoria (R$)</h3>
                 <div className="flex-1 min-h-0">
@@ -63,7 +60,6 @@ export const Reports: React.FC = () => {
                 </div>
             </div>
 
-            {/* Gráfico de Pizza */}
             <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200 h-96 flex flex-col">
                 <h3 className="font-bold text-slate-700 mb-6">Métodos de Pagamento</h3>
                 <div className="flex-1 min-h-0">

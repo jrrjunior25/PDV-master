@@ -2,7 +2,7 @@
 import React from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { LayoutGrid, Package, ShoppingCart, TrendingUp, Users, BarChart2, DollarSign, LogOut, Menu, Settings, UserCircle, Heart } from 'lucide-react';
-import { db } from '../services/db';
+import { db } from '../../infra/db';
 
 interface LayoutProps {
   children: React.ReactNode;
@@ -34,12 +34,11 @@ export const Layout: React.FC<LayoutProps> = ({ children }) => {
 
   const handleLogout = () => {
       db.auth.logout();
-      window.location.reload(); // Força recarga para voltar ao login
+      window.location.reload();
   };
 
   return (
     <div className="flex h-screen bg-slate-100">
-      {/* Sidebar Desktop */}
       <aside className="w-64 bg-slate-900 text-white flex flex-col fixed h-full z-10 hidden md:flex">
         <div className="p-6 border-b border-slate-800">
           <h1 className="text-xl font-bold tracking-tight flex items-center gap-2">
@@ -87,13 +86,11 @@ export const Layout: React.FC<LayoutProps> = ({ children }) => {
         </div>
       </aside>
 
-      {/* Mobile Header */}
       <div className="md:hidden fixed top-0 w-full bg-slate-900 text-white p-4 z-20 flex justify-between items-center">
           <span className="font-bold">MercadoMaster</span>
           <Menu />
       </div>
 
-      {/* Main Content */}
       <main className="flex-1 md:ml-64 p-4 md:p-8 overflow-auto mt-14 md:mt-0 h-full">
         <div className="max-w-7xl mx-auto pb-10">
             {children}

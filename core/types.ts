@@ -2,6 +2,7 @@
 declare global {
   interface Window {
     XLSX: any;
+    alasql: any;
   }
 }
 
@@ -18,7 +19,7 @@ export interface User {
   id: string;
   name: string;
   role: UserRole;
-  pin: string; // Senha numérica para o PDV
+  pin: string;
 }
 
 export interface Client {
@@ -26,52 +27,47 @@ export interface Client {
   name: string;
   cpf: string;
   phone?: string;
-  points: number; // Saldo de pontos acumulados
+  points: number;
   lastPurchase?: number;
 }
 
 export interface Product {
   id: string;
-  code: string; // EAN ou Interno
+  code: string;
   name: string;
-  price: number; // Preço Varejo
-  costPrice: number; // Custo para cálculo de lucro
+  price: number;
+  costPrice: number;
   stock: number;
   category: string;
-  unit: string; // UN, KG, LT
+  unit: string;
   imageUrl?: string;
-  
-  // Atacarejo
-  wholesalePrice?: number; // Preço Atacado
-  wholesaleMinQuantity?: number; // Qtd Mínima para Atacado
-  
-  // Dados Fiscais
+  wholesalePrice?: number;
+  wholesaleMinQuantity?: number;
   ncm?: string;
   cfop?: string;
   cest?: string;
-  taxRate?: number; // Alíquota aproximada
+  taxRate?: number;
 }
 
-// --- KARDEX / ESTOQUE ---
 export interface StockMovement {
   id: string;
   productId: string;
   productName: string;
   type: 'ENTRY_XML' | 'SALE' | 'MANUAL_ADJUST' | 'LOSS' | 'RETURN';
-  quantity: number; // Positivo para entrada, negativo para saída
+  quantity: number;
   previousStock: number;
   newStock: number;
-  costPrice: number; // Custo no momento da movimentação
+  costPrice: number;
   timestamp: number;
-  description?: string; // Ex: "Venda #102", "Importação NFe 123"
-  userId?: string; // Quem fez a ação
+  description?: string;
+  userId?: string;
 }
 
 export interface Supplier {
   id: string;
   cnpj: string;
-  name: string; // xNome
-  tradeName?: string; // xFant
+  name: string;
+  tradeName?: string;
   address?: string;
   city?: string;
   phone?: string;
@@ -82,34 +78,30 @@ export interface Carrier {
   id: string;
   cnpj: string;
   name: string;
-  plate?: string; // Placa veículo
+  plate?: string;
   uf?: string;
 }
 
 export interface CartItem extends Product {
   quantity: number;
   total: number;
-  appliedPrice: number; // Preço efetivamente cobrado (Varejo ou Atacado)
-  isWholesale?: boolean; // Flag se aplicou atacado
+  appliedPrice: number;
+  isWholesale?: boolean;
 }
 
 export interface Sale {
   id: string;
   timestamp: number;
   items: CartItem[];
-  total: number; // Total Final (Pago)
-  subtotal: number; // Total dos Produtos
-  discount: number; // Desconto (Cashback)
+  total: number;
+  subtotal: number;
+  discount: number;
   paymentMethod: PaymentMethod;
   status: 'COMPLETED' | 'CANCELLED' | 'PENDING';
-  
-  // Fiscal
   fiscalCode?: string; 
   xmlContent?: string; 
   protocol?: string; 
   environment?: 'HOMOLOGACAO' | 'PRODUCAO';
-
-  // Cliente & Fidelidade
   clientId?: string;
   clientName?: string;
   clientCpf?: string;
@@ -140,20 +132,15 @@ export interface AppSettings {
   pixKey: string;
   pixKeyType: 'CPF' | 'CNPJ' | 'EMAIL' | 'PHONE' | 'RANDOM';
   printerWidth: 58 | 80;
-  
-  // Configurações Fiscais e Certificado
   certificateName: string; 
-  certificateData: string; // Base64 pfx
+  certificateData: string;
   environment: 'HOMOLOGACAO' | 'PRODUCAO';
-  
-  // Dados NFC-e
-  nfcSeries: number; // Série da Nota (Ex: 1)
-  nextNfcNumber: number; // Próximo número (Ex: 1050)
-  cscToken: string; // Código de Segurança do Contribuinte (AlphaNumérico)
-  cscId: string; // Identificador do CSC (Ex: 000001)
+  nfcSeries: number;
+  nextNfcNumber: number;
+  cscToken: string;
+  cscId: string;
 }
 
-// --- GESTÃO DE CAIXA ---
 export interface CashMovement {
     id: string;
     type: 'SANGRIA' | 'SUPRIMENTO';
@@ -165,17 +152,16 @@ export interface CashMovement {
 
 export interface CashSession {
     id: string;
-    userId: string; // Quem abriu
+    userId: string;
     openedAt: number;
     closedAt?: number;
-    openingBalance: number; // Fundo de troco
-    closingBalance?: number; // Valor informado no fechamento
-    systemBalance?: number; // Calculado pelo sistema (Abertura + Vendas Dinheiro - Sangrias + Suprimentos)
+    openingBalance: number;
+    closingBalance?: number;
+    systemBalance?: number;
     status: 'OPEN' | 'CLOSED';
     movements: CashMovement[];
 }
 
-// Interfaces para Importação XML
 export interface ImportItem {
   code: string;
   name: string;
@@ -185,14 +171,14 @@ export interface ImportItem {
   ncm: string;
   cfop: string;
   cest: string;
-  isNew: boolean; // Se é um produto novo ou atualização
+  isNew: boolean;
 }
 
 export interface ImportFinanceData {
   totalValue: number;
   installments: number;
-  paymentMethod: string; // 'BOLETO' | 'PIX' | 'DINHEIRO' | 'OUTRO'
-  firstDueDate: string; // YYYY-MM-DD
+  paymentMethod: string;
+  firstDueDate: string;
 }
 
 export interface ImportPreviewData {

@@ -1,7 +1,7 @@
 
 import React, { useEffect, useState } from 'react';
-import { db } from '../services/db';
-import { User } from '../types';
+import { db } from '../../infra/db';
+import { User } from '../../core/types';
 import { Plus, Trash2, Shield, User as UserIcon } from 'lucide-react';
 
 export const Users: React.FC = () => {
