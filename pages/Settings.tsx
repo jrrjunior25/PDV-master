@@ -1,8 +1,7 @@
-
 import React, { useEffect, useState, useRef } from 'react';
 import { db } from '../services/db';
 import { AppSettings } from '../types';
-import { Save, Upload, Download, Server, FileCheck, CreditCard, Printer, Store, CheckCircle } from 'lucide-react';
+import { Save, Upload, Download, Server, FileCheck, CreditCard, Printer, Store, CheckCircle, Key } from 'lucide-react';
 
 export const SettingsPage: React.FC = () => {
   const [settings, setSettings] = useState<AppSettings | null>(null);
@@ -11,12 +10,10 @@ export const SettingsPage: React.FC = () => {
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
-    // Carrega as configurações e garante que não seja null
     const loaded = db.getSettings();
     setSettings(loaded);
   }, []);
 
-  // Helper para atualizar o estado de forma segura
   const updateSetting = (key: keyof AppSettings, value: any) => {
     if (settings) {
       setSettings({ ...settings, [key]: value });
@@ -66,9 +63,18 @@ export const SettingsPage: React.FC = () => {
 
   const handleCertificateUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
-    if (file) {
-        updateSetting('certificateName', file.name);
-        setFeedback('Certificado selecionado (Simulação)');
+    if (file && settings) {
+        const reader = new FileReader();
+        reader.onload = (e) => {
+            const base64Data = e.target?.result as string;
+            setSettings({ 
+                ...settings, 
+                certificateName: file.name,
+                certificateData: base64Data 
+            });
+            setFeedback('Certificado carregado e pronto para salvar.');
+        };
+        reader.readAsDataURL(file);
     }
   };
 
@@ -145,13 +151,15 @@ export const SettingsPage: React.FC = () => {
                   />
                 </div>
                 <div className="col-span-2">
-                  <label className="block text-sm font-medium text-slate-700 mb-1">Endereço Completo</label>
+                  <label className="block text-sm font-medium text-slate-700 mb-1">Endereço Completo (Rua, Num - Bairro - Cidade/UF)</label>
                   <input 
                     type="text" 
                     value={settings.address || ''}
                     onChange={e => updateSetting('address', e.target.value)}
+                    placeholder="Ex: Rua A, 100 - Centro - São Paulo/SP"
                     className="w-full border border-slate-300 rounded-lg p-2 focus:ring-2 focus:ring-indigo-500 outline-none"
                   />
+                  <p className="text-xs text-slate-400 mt-1">A cidade é extraída automaticamente do endereço para o PIX.</p>
                 </div>
               </div>
             </div>
@@ -235,8 +243,11 @@ export const SettingsPage: React.FC = () => {
                         <label className="block text-sm font-medium text-slate-700 mb-1">Certificado A1 (.pfx)</label>
                         <div className="border-2 border-dashed border-slate-300 rounded-lg p-4 flex flex-col items-center justify-center text-center bg-slate-50 h-[86px]">
                             {settings.certificateName ? (
-                                <div className="flex items-center gap-2 text-green-600 font-bold">
-                                    <FileCheck size={20} /> {settings.certificateName}
+                                <div className="flex flex-col items-center">
+                                     <div className="flex items-center gap-2 text-green-600 font-bold mb-1">
+                                        <FileCheck size={20} /> {settings.certificateName}
+                                     </div>
+                                     <span className="text-[10px] text-slate-400">Salvo em banco de dados local</span>
                                 </div>
                             ) : (
                                 <>
@@ -248,6 +259,53 @@ export const SettingsPage: React.FC = () => {
                                 </>
                             )}
                         </div>
+                    </div>
+                </div>
+              </div>
+              
+              <div className="border-t border-slate-100 pt-6">
+                 <h3 className="text-lg font-bold text-slate-800 mb-4 flex items-center gap-2">
+                   <Key className="text-indigo-500" size={20} />
+                   Parâmetros de Emissão (CSC / Série)
+                </h3>
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+                    <div>
+                        <label className="block text-sm font-medium text-slate-700 mb-1">Série NFC-e</label>
+                        <input 
+                            type="number" 
+                            className="w-full border border-slate-300 rounded-lg p-2 focus:ring-2 focus:ring-indigo-500 outline-none"
+                            value={settings.nfcSeries || 1}
+                            onChange={e => updateSetting('nfcSeries', parseInt(e.target.value) || 1)}
+                        />
+                    </div>
+                    <div>
+                        <label className="block text-sm font-medium text-slate-700 mb-1">Próximo Número</label>
+                        <input 
+                            type="number" 
+                            className="w-full border border-slate-300 rounded-lg p-2 focus:ring-2 focus:ring-indigo-500 outline-none font-bold text-indigo-600"
+                            value={settings.nextNfcNumber || 1}
+                            onChange={e => updateSetting('nextNfcNumber', parseInt(e.target.value) || 1)}
+                        />
+                    </div>
+                    <div>
+                        <label className="block text-sm font-medium text-slate-700 mb-1">ID do Token (CSC)</label>
+                        <input 
+                            type="text" 
+                            placeholder="Ex: 000001"
+                            className="w-full border border-slate-300 rounded-lg p-2 focus:ring-2 focus:ring-indigo-500 outline-none"
+                            value={settings.cscId || ''}
+                            onChange={e => updateSetting('cscId', e.target.value)}
+                        />
+                    </div>
+                    <div>
+                        <label className="block text-sm font-medium text-slate-700 mb-1">Código CSC (Token)</label>
+                        <input 
+                            type="password"
+                            placeholder="Código Alfa-Numérico"
+                            className="w-full border border-slate-300 rounded-lg p-2 focus:ring-2 focus:ring-indigo-500 outline-none"
+                            value={settings.cscToken || ''}
+                            onChange={e => updateSetting('cscToken', e.target.value)}
+                        />
                     </div>
                 </div>
               </div>

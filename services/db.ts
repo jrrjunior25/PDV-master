@@ -1,5 +1,6 @@
 
-import { Product, Sale, CartItem, PaymentMethod, User, FinancialRecord, AppSettings, Supplier, Carrier } from '../types';
+import { Product, Sale, CartItem, PaymentMethod, User, FinancialRecord, AppSettings, Supplier, Carrier, ImportPreviewData, ImportItem } from '../types';
+import { NfcService } from './nfcService';
 
 const PRODUCTS_KEY = 'mercadomaster_products';
 const SALES_KEY = 'mercadomaster_sales';
@@ -31,7 +32,12 @@ const DEFAULT_SETTINGS: AppSettings = {
   pixKeyType: 'CNPJ',
   printerWidth: 80,
   certificateName: '',
-  environment: 'HOMOLOGACAO'
+  certificateData: '',
+  environment: 'HOMOLOGACAO',
+  nfcSeries: 1,
+  nextNfcNumber: 1,
+  cscToken: '',
+  cscId: ''
 };
 
 // Helper para extrair texto de XML com segurança
@@ -40,18 +46,24 @@ const getTagValue = (element: Element, tagName: string): string => {
   return tags.length > 0 ? tags[0].textContent || '' : '';
 };
 
+const nfcService = new NfcService();
+
 export const db = {
   init: () => {
-    const storedProducts = localStorage.getItem(PRODUCTS_KEY);
-    if (!storedProducts || JSON.parse(storedProducts).length === 0) {
+    // Correção Crítica: Verifica se a chave é NULL (inexistente) ao invés de verificar se está vazia.
+    if (localStorage.getItem(PRODUCTS_KEY) === null) {
       localStorage.setItem(PRODUCTS_KEY, JSON.stringify(INITIAL_PRODUCTS));
     }
-    if (!localStorage.getItem(SALES_KEY)) localStorage.setItem(SALES_KEY, JSON.stringify([]));
-    if (!localStorage.getItem(USERS_KEY)) localStorage.setItem(USERS_KEY, JSON.stringify(INITIAL_USERS));
-    if (!localStorage.getItem(FINANCIAL_KEY)) localStorage.setItem(FINANCIAL_KEY, JSON.stringify([]));
-    if (!localStorage.getItem(SETTINGS_KEY)) localStorage.setItem(SETTINGS_KEY, JSON.stringify(DEFAULT_SETTINGS));
-    if (!localStorage.getItem(SUPPLIERS_KEY)) localStorage.setItem(SUPPLIERS_KEY, JSON.stringify([]));
-    if (!localStorage.getItem(CARRIERS_KEY)) localStorage.setItem(CARRIERS_KEY, JSON.stringify([]));
+    if (localStorage.getItem(SALES_KEY) === null) localStorage.setItem(SALES_KEY, JSON.stringify([]));
+    if (localStorage.getItem(USERS_KEY) === null) localStorage.setItem(USERS_KEY, JSON.stringify(INITIAL_USERS));
+    if (localStorage.getItem(FINANCIAL_KEY) === null) localStorage.setItem(FINANCIAL_KEY, JSON.stringify([]));
+    
+    if (localStorage.getItem(SETTINGS_KEY) === null) {
+      localStorage.setItem(SETTINGS_KEY, JSON.stringify(DEFAULT_SETTINGS));
+    }
+    
+    if (localStorage.getItem(SUPPLIERS_KEY) === null) localStorage.setItem(SUPPLIERS_KEY, JSON.stringify([]));
+    if (localStorage.getItem(CARRIERS_KEY) === null) localStorage.setItem(CARRIERS_KEY, JSON.stringify([]));
   },
 
   // --- PRODUTOS (CRUD) ---
@@ -82,26 +94,158 @@ export const db = {
     localStorage.setItem(PRODUCTS_KEY, JSON.stringify(products));
   },
 
+  // --- EXCEL IMPORT/EXPORT LOGIC ---
+
+  downloadExcelTemplate: () => {
+    const XLSX = window.XLSX;
+    if (!XLSX) return alert("Erro: Biblioteca Excel não carregada.");
+
+    const headers = [
+      "CODIGO_BARRAS*", 
+      "NOME_PRODUTO*", 
+      "PRECO_VENDA", 
+      "PRECO_CUSTO", 
+      "ESTOQUE", 
+      "UNIDADE", 
+      "CATEGORIA", 
+      "NCM", 
+      "CFOP", 
+      "CEST"
+    ];
+    
+    const exampleRow = [
+      "7891234567890", 
+      "Produto Exemplo 1KG", 
+      10.50, 
+      5.00, 
+      100, 
+      "UN", 
+      "Alimentos", 
+      "12345678", 
+      "5102", 
+      "1234567"
+    ];
+
+    const wsData = [headers, exampleRow];
+    const ws = XLSX.utils.aoa_to_sheet(wsData);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, "Modelo Importação");
+    XLSX.writeFile(wb, "Modelo_Importacao_Produtos.xlsx");
+  },
+
+  exportProductsToExcel: () => {
+    const XLSX = window.XLSX;
+    if (!XLSX) return alert("Erro: Biblioteca Excel não carregada.");
+
+    const products = db.getProducts();
+    const exportData = products.map(p => ({
+      "CODIGO_BARRAS*": p.code,
+      "NOME_PRODUTO*": p.name,
+      "PRECO_VENDA": p.price,
+      "PRECO_CUSTO": p.costPrice,
+      "ESTOQUE": p.stock,
+      "UNIDADE": p.unit,
+      "CATEGORIA": p.category,
+      "NCM": p.ncm || '',
+      "CFOP": p.cfop || '',
+      "CEST": p.cest || ''
+    }));
+
+    const ws = XLSX.utils.json_to_sheet(exportData);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, "Produtos");
+    XLSX.writeFile(wb, `Estoque_MercadoMaster_${new Date().toISOString().slice(0,10)}.xlsx`);
+  },
+
+  importProductsFromExcel: async (file: File): Promise<string> => {
+    return new Promise((resolve, reject) => {
+      const XLSX = window.XLSX;
+      if (!XLSX) return reject("Biblioteca Excel indisponível.");
+
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        try {
+          const data = new Uint8Array(e.target?.result as ArrayBuffer);
+          const workbook = XLSX.read(data, { type: 'array' });
+          const sheetName = workbook.SheetNames[0];
+          const sheet = workbook.Sheets[sheetName];
+          const jsonData = XLSX.utils.sheet_to_json(sheet);
+
+          if (jsonData.length === 0) return reject("Planilha vazia.");
+
+          const products = db.getProducts();
+          let created = 0;
+          let updated = 0;
+
+          jsonData.forEach((row: any) => {
+            const code = (row["CODIGO_BARRAS*"] || row["CODIGO"] || row["CODE"])?.toString();
+            const name = row["NOME_PRODUTO*"] || row["NOME"] || row["NAME"];
+
+            if (!code || !name) return; // Skip invalid rows
+
+            const existingIdx = products.findIndex(p => p.code === code);
+            
+            const productData: Product = {
+              id: existingIdx >= 0 ? products[existingIdx].id : crypto.randomUUID(),
+              code: code,
+              name: name,
+              price: Number(row["PRECO_VENDA"] || row["PRICE"] || 0),
+              costPrice: Number(row["PRECO_CUSTO"] || row["COST"] || 0),
+              stock: Number(row["ESTOQUE"] || row["STOCK"] || 0),
+              unit: row["UNIDADE"] || row["UNIT"] || 'UN',
+              category: row["CATEGORIA"] || row["CATEGORY"] || 'Geral',
+              ncm: row["NCM"] ? String(row["NCM"]) : undefined,
+              cfop: row["CFOP"] ? String(row["CFOP"]) : undefined,
+              cest: row["CEST"] ? String(row["CEST"]) : undefined,
+              imageUrl: existingIdx >= 0 ? products[existingIdx].imageUrl : 'https://via.placeholder.com/200?text=No+Image'
+            };
+
+            if (existingIdx >= 0) {
+              if(row["ESTOQUE"] === undefined) productData.stock = products[existingIdx].stock;
+              products[existingIdx] = productData;
+              updated++;
+            } else {
+              products.push(productData);
+              created++;
+            }
+          });
+
+          localStorage.setItem(PRODUCTS_KEY, JSON.stringify(products));
+          resolve(`Importação Concluída!\n${created} produtos criados.\n${updated} produtos atualizados.`);
+        } catch (err) {
+          console.error(err);
+          reject("Erro ao processar arquivo Excel.");
+        }
+      };
+      reader.readAsArrayBuffer(file);
+    });
+  },
+
   // --- XML IMPORTATION LOGIC ---
-  processXmlImport: (xmlContent: string) => {
+  
+  parseNFe: (xmlContent: string): ImportPreviewData => {
     const parser = new DOMParser();
     const xmlDoc = parser.parseFromString(xmlContent, "text/xml");
-    const summary = {
-      productsUpdated: 0,
-      productsCreated: 0,
-      supplierSaved: false,
-      carrierSaved: false
-    };
+    
+    let supplier: Supplier | null = null;
+    let carrier: Carrier | null = null;
+    const items: ImportItem[] = [];
+    
+    // Financeiro
+    let vNF = 0;
+    const totalTags = xmlDoc.getElementsByTagName('ICMSTot');
+    if (totalTags.length > 0) {
+      const vNFStr = getTagValue(totalTags[0], 'vNF');
+      vNF = vNFStr ? parseFloat(vNFStr) : 0;
+    }
 
     // 1. Processar Fornecedor (Emitente)
     const emitTags = xmlDoc.getElementsByTagName('emit');
     if (emitTags.length > 0) {
       const emit = emitTags[0];
       const cnpj = getTagValue(emit, 'CNPJ');
-      const suppliers = db.getSuppliers();
-      
-      const supplierData: Supplier = {
-        id: cnpj, // Usa CNPJ como ID para evitar duplicatas
+      supplier = {
+        id: cnpj,
         cnpj: cnpj,
         name: getTagValue(emit, 'xNome'),
         tradeName: getTagValue(emit, 'xFant'),
@@ -110,15 +254,6 @@ export const db = {
         phone: getTagValue(emit, 'fone'),
         ie: getTagValue(emit, 'IE')
       };
-
-      const existingSupIndex = suppliers.findIndex(s => s.cnpj === cnpj);
-      if (existingSupIndex >= 0) {
-        suppliers[existingSupIndex] = supplierData;
-      } else {
-        suppliers.push(supplierData);
-      }
-      localStorage.setItem(SUPPLIERS_KEY, JSON.stringify(suppliers));
-      summary.supplierSaved = true;
     }
 
     // 2. Processar Transportadora
@@ -126,91 +261,147 @@ export const db = {
     if (transpTags.length > 0) {
       const transp = transpTags[0];
       const cnpj = getTagValue(transp, 'CNPJ');
-      
       if (cnpj) {
-        const carriers = db.getCarriers();
-        const carrierData: Carrier = {
+        carrier = {
           id: cnpj,
           cnpj: cnpj,
           name: getTagValue(transp, 'xNome'),
           uf: getTagValue(transp, 'UF'),
         };
-        
-        // Veículo (Placa)
         const veicTags = xmlDoc.getElementsByTagName('veicTransp');
         if(veicTags.length > 0) {
-            carrierData.plate = getTagValue(veicTags[0], 'placa');
+            carrier.plate = getTagValue(veicTags[0], 'placa');
         }
-
-        const existingCarIndex = carriers.findIndex(c => c.cnpj === cnpj);
-        if (existingCarIndex >= 0) {
-          carriers[existingCarIndex] = carrierData;
-        } else {
-          carriers.push(carrierData);
-        }
-        localStorage.setItem(CARRIERS_KEY, JSON.stringify(carriers));
-        summary.carrierSaved = true;
       }
     }
 
     // 3. Processar Produtos (Det)
     const detTags = xmlDoc.getElementsByTagName('det');
-    const products = db.getProducts();
+    const currentProducts = db.getProducts();
 
     for (let i = 0; i < detTags.length; i++) {
       const prodTag = detTags[i].getElementsByTagName('prod')[0];
-      const impostoTag = detTags[i].getElementsByTagName('imposto')[0];
-
-      // Identificação
+      
       let code = getTagValue(prodTag, 'cEAN');
       if (!code || code === 'SEM GTIN') {
-        code = getTagValue(prodTag, 'cProd'); // Usa código interno se não tiver EAN
+        code = getTagValue(prodTag, 'cProd');
       }
 
-      const name = getTagValue(prodTag, 'xProd');
-      const ncm = getTagValue(prodTag, 'NCM');
-      const cfop = getTagValue(prodTag, 'CFOP');
-      const cest = getTagValue(prodTag, 'CEST');
-      
-      // Valores e Quantidades do XML
       const quantity = parseFloat(getTagValue(prodTag, 'qCom'));
-      const costPrice = parseFloat(getTagValue(prodTag, 'vUnCom')); // Valor unitário de comercialização (Custo)
-      const unit = getTagValue(prodTag, 'uCom');
+      const costPrice = parseFloat(getTagValue(prodTag, 'vUnCom'));
+      
+      const exists = currentProducts.some(p => p.code === code);
 
-      // Cálculo sugerido de venda (Margem simples de 50% se for novo)
-      const suggestedPrice = costPrice * 1.5;
+      items.push({
+        code,
+        name: getTagValue(prodTag, 'xProd'),
+        quantity,
+        costPrice,
+        unit: getTagValue(prodTag, 'uCom'),
+        ncm: getTagValue(prodTag, 'NCM'),
+        cfop: getTagValue(prodTag, 'CFOP'),
+        cest: getTagValue(prodTag, 'CEST'),
+        isNew: !exists
+      });
+    }
+    
+    const today = new Date();
+    today.setDate(today.getDate() + 30);
 
-      const existingProductIndex = products.findIndex(p => p.code === code);
+    return { 
+      supplier, 
+      carrier, 
+      items,
+      finance: {
+        totalValue: vNF,
+        installments: 1,
+        paymentMethod: 'BOLETO',
+        firstDueDate: today.toISOString().split('T')[0]
+      }
+    };
+  },
 
-      if (existingProductIndex >= 0) {
-        // Atualiza existente (Entrada de Estoque)
-        products[existingProductIndex].stock += quantity;
-        products[existingProductIndex].costPrice = costPrice; // Atualiza custo
-        products[existingProductIndex].ncm = ncm; // Atualiza fiscal se mudou
-        products[existingProductIndex].cfop = cfop;
+  commitImport: (data: ImportPreviewData) => {
+    const products = db.getProducts();
+    const suppliers = db.getSuppliers();
+    const carriers = db.getCarriers();
+    const financialRecords = db.getFinancialRecords();
+    
+    const summary = {
+      productsCreated: 0,
+      productsUpdated: 0,
+      financeRecordsCreated: 0
+    };
+
+    if (data.supplier) {
+      const idx = suppliers.findIndex(s => s.cnpj === data.supplier!.cnpj);
+      if (idx >= 0) suppliers[idx] = data.supplier;
+      else suppliers.push(data.supplier);
+      localStorage.setItem(SUPPLIERS_KEY, JSON.stringify(suppliers));
+    }
+
+    if (data.carrier) {
+      const idx = carriers.findIndex(c => c.cnpj === data.carrier!.cnpj);
+      if (idx >= 0) carriers[idx] = data.carrier;
+      else carriers.push(data.carrier);
+      localStorage.setItem(CARRIERS_KEY, JSON.stringify(carriers));
+    }
+
+    data.items.forEach(item => {
+      const index = products.findIndex(p => p.code === item.code);
+
+      if (index >= 0) {
+        products[index].stock += item.quantity;
+        products[index].costPrice = item.costPrice;
+        products[index].ncm = item.ncm;
+        products[index].cfop = item.cfop;
         summary.productsUpdated++;
       } else {
-        // Cria Novo
         const newProduct: Product = {
           id: crypto.randomUUID(),
-          code: code,
-          name: name,
-          price: suggestedPrice,
-          costPrice: costPrice,
-          stock: quantity,
-          category: 'Importado XML', // Categoria padrão
-          unit: unit.substring(0, 2).toUpperCase(), // UN, KG, LT
-          ncm: ncm,
-          cfop: cfop,
-          cest: cest,
+          code: item.code,
+          name: item.name,
+          price: item.costPrice * 1.5, 
+          costPrice: item.costPrice,
+          stock: item.quantity,
+          category: 'Importado XML',
+          unit: item.unit.substring(0, 2).toUpperCase(),
+          ncm: item.ncm,
+          cfop: item.cfop,
+          cest: item.cest,
           imageUrl: 'https://via.placeholder.com/200?text=No+Image'
         };
         products.push(newProduct);
         summary.productsCreated++;
       }
+    });
+    localStorage.setItem(PRODUCTS_KEY, JSON.stringify(products));
+
+    if (data.finance.totalValue > 0) {
+      const totalVal = Number(data.finance.totalValue);
+      const numInstallments = Math.max(1, Number(data.finance.installments));
+      
+      const installmentValue = totalVal / numInstallments;
+      const baseDate = new Date(data.finance.firstDueDate);
+      baseDate.setMinutes(baseDate.getMinutes() + baseDate.getTimezoneOffset());
+
+      for (let i = 0; i < numInstallments; i++) {
+        const dueDate = new Date(baseDate);
+        dueDate.setMonth(dueDate.getMonth() + i);
+        
+        financialRecords.push({
+          id: crypto.randomUUID(),
+          type: 'DESPESA',
+          description: `Compra NFe - ${data.supplier?.name || 'Fornecedor'} (Parc ${i + 1}/${numInstallments})`,
+          amount: Number(installmentValue.toFixed(2)), 
+          date: dueDate.getTime(),
+          category: 'Fornecedores'
+        });
+        summary.financeRecordsCreated++;
+      }
+      localStorage.setItem(FINANCIAL_KEY, JSON.stringify(financialRecords));
     }
 
-    localStorage.setItem(PRODUCTS_KEY, JSON.stringify(products));
     return summary;
   },
 
@@ -230,12 +421,22 @@ export const db = {
     return data ? JSON.parse(data) : [];
   },
 
-  createSale: (items: CartItem[], paymentMethod: PaymentMethod): Sale => {
+  createSale: async (items: CartItem[], paymentMethod: PaymentMethod): Promise<Sale> => {
     const sales = db.getSales();
     const total = items.reduce((acc, item) => acc + item.total, 0);
     
-    const fiscalCode = `35${new Date().getFullYear()}${Math.random().toString().slice(2, 16)}${Math.random().toString().slice(2, 16)}`;
+    // 1. Carregar Configurações para Emissão
+    const settings = db.getSettings();
+    const nNF = settings.nextNfcNumber || 1;
+    
+    // 2. Gerar NFC-e (Dados e XML)
+    const accessKey = nfcService.generateAccessKey(settings, nNF);
+    const xml = nfcService.generateXML(settings, items, nNF, total, paymentMethod, accessKey);
+    
+    // 3. Simular Transmissão
+    const transmission = await nfcService.transmitNFCe(xml, settings);
 
+    // 4. Criar Objeto de Venda
     const newSale: Sale = {
       id: crypto.randomUUID(),
       timestamp: Date.now(),
@@ -243,12 +444,17 @@ export const db = {
       total,
       paymentMethod,
       status: 'COMPLETED',
-      fiscalCode
+      fiscalCode: accessKey,
+      xmlContent: xml,
+      protocol: transmission.protocol,
+      environment: settings.environment
     };
 
+    // 5. Salvar Venda
     sales.push(newSale);
     localStorage.setItem(SALES_KEY, JSON.stringify(sales));
 
+    // 6. Atualizar Estoque
     const products = db.getProducts();
     items.forEach(item => {
       const productIndex = products.findIndex(p => p.id === item.id);
@@ -258,14 +464,19 @@ export const db = {
     });
     localStorage.setItem(PRODUCTS_KEY, JSON.stringify(products));
 
+    // 7. Lançar Financeiro
     db.addFinancialRecord({
       id: crypto.randomUUID(),
       type: 'RECEITA',
-      description: `Venda PDV #${fiscalCode.slice(-4)}`,
+      description: `Venda PDV #${nNF} (NFC-e)`,
       amount: total,
       date: Date.now(),
       category: 'Vendas'
     });
+
+    // 8. Incrementar Número da Nota e Salvar
+    settings.nextNfcNumber = nNF + 1;
+    db.saveSettings(settings);
 
     return newSale;
   },
@@ -313,6 +524,7 @@ export const db = {
   getSettings: (): AppSettings => {
     const data = localStorage.getItem(SETTINGS_KEY);
     if (data) {
+      // Faz o merge garantindo que novos campos do DEFAULT entrem se não existirem no salvo
       return { ...DEFAULT_SETTINGS, ...JSON.parse(data) };
     }
     return DEFAULT_SETTINGS;
@@ -332,7 +544,7 @@ export const db = {
       settings: db.getSettings(),
       suppliers: db.getSuppliers(),
       carriers: db.getCarriers(),
-      version: '1.1',
+      version: '2.0',
       timestamp: Date.now()
     };
     return JSON.stringify(backupData, null, 2);
@@ -341,7 +553,7 @@ export const db = {
   restoreBackup: (jsonData: string) => {
     try {
       const data = JSON.parse(jsonData);
-      if (!data.version && !data.products) throw new Error("Arquivo inválido");
+      if (!data.products) throw new Error("Arquivo inválido");
 
       if (data.products) localStorage.setItem(PRODUCTS_KEY, JSON.stringify(data.products));
       if (data.sales) localStorage.setItem(SALES_KEY, JSON.stringify(data.sales));
