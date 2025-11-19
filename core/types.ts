@@ -3,6 +3,7 @@ declare global {
   interface Window {
     XLSX: any;
     alasql: any;
+    JsBarcode: any;
   }
 }
 

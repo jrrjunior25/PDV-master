@@ -66,7 +66,7 @@ const runSql = (sql: string, params?: any[]) => {
     }
 };
 
-// Persistência do Banco Inteiro
+// Persistência do Banco Inteiro (Manual Dump)
 const saveDb = () => {
     if (!window.alasql || !isInitialized) return;
     const dump: Record<string, any[]> = {};
@@ -87,19 +87,20 @@ export const db = {
   init: async () => {
     if (isInitialized) return;
     
-    // Wait for AlaSQL
+    // 1. Wait for AlaSQL (Polling)
     let retries = 0;
-    while (!window.alasql && retries < 30) { 
+    while (!window.alasql && retries < 30) { // Wait 3 seconds
         await new Promise(resolve => setTimeout(resolve, 100));
         retries++;
     }
 
-    // Fallback
+    // 2. Fallback Injection if failed
     if (!window.alasql) {
         const script = document.createElement('script');
         script.src = "https://cdnjs.cloudflare.com/ajax/libs/alasql/4.0.0/alasql.min.js";
         script.async = false;
         document.head.appendChild(script);
+        
         let retriesFallback = 0;
         while (!window.alasql && retriesFallback < 50) { 
              await new Promise(resolve => setTimeout(resolve, 100));
@@ -112,7 +113,7 @@ export const db = {
         throw new Error("Falha crítica: O motor de banco de dados (AlaSQL) não pôde ser carregado."); 
     }
 
-    // Create Tables
+    // Criar Tabelas SQL - [total] escapado
     try {
         runSql(`CREATE TABLE IF NOT EXISTS products (id STRING PRIMARY KEY, code STRING, name STRING, price NUMBER, costPrice NUMBER, stock NUMBER, category STRING, unit STRING, imageUrl STRING, wholesalePrice NUMBER, wholesaleMinQuantity NUMBER, ncm STRING, cfop STRING, cest STRING, taxRate NUMBER)`);
         runSql(`CREATE TABLE IF NOT EXISTS sales (id STRING PRIMARY KEY, timestamp NUMBER, [total] NUMBER, subtotal NUMBER, discount NUMBER, paymentMethod STRING, status STRING, fiscalCode STRING, xmlContent STRING, protocol STRING, environment STRING, clientId STRING, clientName STRING, clientCpf STRING, pointsEarned NUMBER, pointsRedeemed NUMBER, items JSON)`);
@@ -128,7 +129,7 @@ export const db = {
         console.error("Error creating tables", e);
     }
 
-    // Restore Data
+    // Carregar Dados Salvos
     const savedData = localStorage.getItem(DB_KEY);
     if (savedData) {
         try {
@@ -148,7 +149,7 @@ export const db = {
         }
     }
 
-    // Initial Data
+    // Popular Dados Iniciais se vazio
     try {
         const prodCount = runSql("SELECT COUNT(*) as c FROM products")[0]?.c || 0;
         if (prodCount === 0) INITIAL_PRODUCTS.forEach(p => runSql("INSERT INTO products VALUES ?", [p]));
@@ -237,7 +238,7 @@ export const db = {
           if (!prodTag) continue;
 
           let code = getTagValue(prodTag, 'cEAN');
-          if (!code || code === 'SEM GTIN' || code === '') {
+          if (!code || code === 'SEM GTIN' || code.trim() === '') {
               code = getTagValue(prodTag, 'cProd');
           }
           if (!code) code = `GEN-${Date.now()}-${i}`;
@@ -281,6 +282,7 @@ export const db = {
     };
   },
 
+  // --- COMMIT IMPORT SQL ---
   commitImport: (data: ImportPreviewData) => {
     const summary = { productsCreated: 0, productsUpdated: 0, financeRecordsCreated: 0 };
 
@@ -319,14 +321,13 @@ export const db = {
             previousStock = prod.stock || 0;
             isUpdate = true;
             
-            // Garante que todos os campos estejam presentes e sanitizados
             productToSave = {
                 id: productId,
                 code: prod.code,
                 name: prod.name,
                 price: prod.price,
-                costPrice: item.costPrice, // Atualiza custo vindo da nota
-                stock: previousStock + item.quantity, // Soma estoque
+                costPrice: item.costPrice, 
+                stock: previousStock + item.quantity, 
                 category: prod.category || 'Geral',
                 unit: prod.unit || 'UN',
                 imageUrl: prod.imageUrl || 'https://via.placeholder.com/200?text=No+Image',
@@ -343,7 +344,7 @@ export const db = {
               id: productId, 
               code: item.code, 
               name: item.name,
-              price: item.costPrice * 1.5, // Margem sugerida
+              price: item.costPrice * 1.5, 
               costPrice: item.costPrice, 
               stock: item.quantity,
               category: 'Importado XML', 
@@ -383,20 +384,32 @@ export const db = {
 
     if (data.finance.totalValue > 0) {
       try {
-          const totalVal = Number(data.finance.totalValue);
-          const numInstallments = Math.max(1, Number(data.finance.installments));
-          const installmentValue = totalVal / numInstallments;
+          // Parcelamento Robusto com Resíduo
+          const totalVal = parseFloat(String(data.finance.totalValue));
+          const numInstallments = Math.floor(Math.max(1, parseInt(String(data.finance.installments), 10)));
+          
+          const rawInstallment = totalVal / numInstallments;
+          const baseInstallment = Math.floor(rawInstallment * 100) / 100;
+          
+          // Resíduo de centavos
+          const totalDistributed = baseInstallment * numInstallments;
+          const remainder = Math.round((totalVal - totalDistributed) * 100) / 100;
+
           const baseDate = new Date(data.finance.firstDueDate);
           baseDate.setMinutes(baseDate.getMinutes() + baseDate.getTimezoneOffset());
 
           for (let i = 0; i < numInstallments; i++) {
             const dueDate = new Date(baseDate); 
             dueDate.setMonth(dueDate.getMonth() + i);
+            
+            let currentAmount = baseInstallment;
+            if (i === 0) currentAmount += remainder; // Adiciona resíduo na 1ª parcela
+
             const finRec = {
               id: crypto.randomUUID(), 
               type: 'DESPESA',
               description: `Compra NFe - ${data.supplier?.name || 'Fornecedor'} (Parc ${i + 1}/${numInstallments})`,
-              amount: Number(installmentValue.toFixed(2)), 
+              amount: Number(currentAmount.toFixed(2)), 
               date: dueDate.getTime(), 
               category: 'Fornecedores'
             };
