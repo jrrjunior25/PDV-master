@@ -1,3 +1,4 @@
+
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { Link } from 'react-router-dom';
 import { db } from '../../infra/db';
@@ -113,6 +114,8 @@ export const POS: React.FC = () => {
           </div>
       `).join('');
 
+      const isNonFiscal = sale.protocol === 'SEM VALOR FISCAL';
+
       const htmlContent = `
         <html>
           <head>
@@ -145,7 +148,9 @@ export const POS: React.FC = () => {
             <div class="text-center sub-header">CNPJ: ${settings.cnpj}</div>
             <div class="text-center sub-header">${settings.address}</div>
             <div class="line"></div>
-            <div class="text-center bold" style="font-size: 12px;">*** ${sale.protocol === 'SEM VALOR FISCAL' ? 'RECIBO NÃO FISCAL' : 'DOCUMENTO AUXILIAR'} ***</div>
+            <div class="text-center bold" style="font-size: 12px;">
+                *** ${isNonFiscal ? 'ORÇAMENTO / RECIBO' : 'DOCUMENTO AUXILIAR NFC-e'} ***
+            </div>
             <div class="text-center sub-header">Nº ${sale.fiscalCode?.slice(-8) || '000000'}</div>
             <div class="line"></div>
             
@@ -181,7 +186,7 @@ export const POS: React.FC = () => {
                 <span class="bold">${sale.paymentMethod}</span>
             </div>
 
-            ${sale.clientName ? `
+            ${sale.clientName && !isNonFiscal ? `
             <div class="line"></div>
             <div style="font-size: 12px;">
                 CLIENTE: ${sale.clientName}<br/>
@@ -558,7 +563,7 @@ export const POS: React.FC = () => {
         <div className="flex gap-4">
             <button className="bg-slate-800 px-3 py-1 rounded hover:bg-pdv-accent hover:text-white transition-colors">F1 - AJUDA</button>
             <button onClick={() => setIsPriceCheckOpen(true)} className="bg-slate-800 px-3 py-1 rounded hover:bg-pdv-accent hover:text-white transition-colors">F5 - CONSULTAR</button>
-            <button onClick={handleFastNonFiscalCheckout} className="bg-yellow-600 text-white px-3 py-1 rounded hover:bg-yellow-700 transition-colors shadow-md font-bold flex items-center gap-1"><Printer size={14} /> F8 - NÃO FISCAL</button>
+            <button onClick={handleFastNonFiscalCheckout} className="bg-yellow-600 text-white px-3 py-1 rounded hover:bg-yellow-700 transition-colors shadow-md font-bold flex items-center gap-1"><Printer size={14} /> F8 - ORÇAMENTO</button>
             <button onClick={() => setIsFunctionsMenuOpen(true)} className="bg-slate-800 px-3 py-1 rounded hover:bg-pdv-accent hover:text-white text-pdv-accent transition-colors">F9 - FUNÇÕES</button>
             <button onClick={startCheckoutFlow} className="bg-pdv-accent text-white px-4 py-1 rounded hover:bg-blue-600 transition-colors shadow-lg shadow-blue-900/50">F12 - FECHAR VENDA</button>
         </div>
@@ -716,12 +721,12 @@ export const POS: React.FC = () => {
                 <div className="mt-8 bg-white/20 px-8 py-6 rounded-lg font-mono text-sm text-center max-w-2xl backdrop-blur-sm">
                     <p className="mb-2 font-bold text-lg">{lastSaleData.protocol === 'SEM VALOR FISCAL' ? 'RECIBO NÃO FISCAL' : `NFC-e Nº ${lastSaleData.fiscalCode?.slice(25,34)}`}</p>
                     <div className="text-left bg-black/10 p-4 rounded mb-4">
-                        {lastSaleData.clientName ? (
+                        {lastSaleData.clientName && lastSaleData.protocol !== 'SEM VALOR FISCAL' ? (
                             <>
                                 <p className="font-bold">Cliente: {lastSaleData.clientName}</p>
                                 <p className="text-xs opacity-70">CPF: {lastSaleData.clientCpf}</p>
                             </>
-                        ) : <p className="italic opacity-70">Consumidor não identificado</p>}
+                        ) : <p className="italic opacity-70">{lastSaleData.protocol === 'SEM VALOR FISCAL' ? 'Venda Anônima (Orçamento)' : 'Consumidor não identificado'}</p>}
                     </div>
                     <button 
                         onClick={() => handlePrintReceipt(lastSaleData)}
