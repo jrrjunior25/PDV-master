@@ -53,7 +53,6 @@ const TABLE_LIST = [
     'suppliers', 'carriers', 'settings', 'cash_sessions', 'stock_movements'
 ];
 
-// Helper SQL seguro
 const runSql = (sql: string, params?: any[]) => {
     if (!window.alasql) { 
         console.warn("AlaSQL not loaded yet. Query skipped:", sql); 
@@ -67,7 +66,6 @@ const runSql = (sql: string, params?: any[]) => {
     }
 };
 
-// Persistência do Banco Inteiro
 const saveDb = () => {
     if (!window.alasql || !isInitialized) return;
     const dump: Record<string, any[]> = {};
@@ -99,7 +97,6 @@ export const db = {
         script.src = "https://cdnjs.cloudflare.com/ajax/libs/alasql/4.0.0/alasql.min.js";
         script.async = false;
         document.head.appendChild(script);
-        
         let retriesFallback = 0;
         while (!window.alasql && retriesFallback < 50) { 
              await new Promise(resolve => setTimeout(resolve, 100));
@@ -428,7 +425,7 @@ export const db = {
   getCarriers: (): Carrier[] => runSql("SELECT * FROM carriers"),
   getSales: (): Sale[] => runSql("SELECT * FROM sales"),
 
-  // --- FUNÇÃO DE VENDA ATUALIZADA (Suporte a Cancelamento e Não Fiscal) ---
+  // --- FUNÇÃO DE VENDA ATUALIZADA ---
   createSale: async (
       items: CartItem[], 
       paymentMethod: PaymentMethod, 
@@ -463,14 +460,12 @@ export const db = {
         settings.nextNfcNumber = nNF + 1;
         db.saveSettings(settings);
     } else {
-        // Não Fiscal (F8)
         const uniqueId = Date.now().toString().slice(-8);
         accessKey = `RECIBO-NAO-FISCAL-${uniqueId}`;
         xml = '';
         protocol = 'SEM VALOR FISCAL';
     }
 
-    // Pontos só se completada
     const pointsEarned = (status === 'COMPLETED') ? Math.floor(finalTotal / 10) : 0;
     
     if (status === 'COMPLETED' && client && client.id !== 'default') {
@@ -501,7 +496,6 @@ export const db = {
 
     runSql("INSERT INTO sales VALUES ?", [newSale]);
 
-    // Só baixa estoque e gera financeiro se for COMPLETED
     if (status === 'COMPLETED') {
         items.forEach(item => {
           const res = runSql("SELECT * FROM products WHERE id = ?", [item.id]);
