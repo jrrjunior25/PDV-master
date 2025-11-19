@@ -35,7 +35,8 @@ const DEFAULT_SETTINGS: AppSettings = {
   nfcSeries: 1,
   nextNfcNumber: 1,
   cscToken: '',
-  cscId: ''
+  cscId: '',
+  logoData: ''
 };
 
 const getTagValue = (element: Element | null | undefined, tagName: string): string => {
@@ -66,7 +67,7 @@ const runSql = (sql: string, params?: any[]) => {
     }
 };
 
-// Persistência do Banco Inteiro (Manual Dump)
+// Persistência do Banco Inteiro
 const saveDb = () => {
     if (!window.alasql || !isInitialized) return;
     const dump: Record<string, any[]> = {};
@@ -87,14 +88,12 @@ export const db = {
   init: async () => {
     if (isInitialized) return;
     
-    // 1. Wait for AlaSQL (Polling)
     let retries = 0;
-    while (!window.alasql && retries < 30) { // Wait 3 seconds
+    while (!window.alasql && retries < 30) { 
         await new Promise(resolve => setTimeout(resolve, 100));
         retries++;
     }
 
-    // 2. Fallback Injection if failed
     if (!window.alasql) {
         const script = document.createElement('script');
         script.src = "https://cdnjs.cloudflare.com/ajax/libs/alasql/4.0.0/alasql.min.js";
@@ -108,12 +107,18 @@ export const db = {
         }
     }
 
+    if (!window.XLSX) {
+        const scriptXlsx = document.createElement('script');
+        scriptXlsx.src = "https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js";
+        scriptXlsx.async = false;
+        document.head.appendChild(scriptXlsx);
+    }
+
     if (!window.alasql) {
         console.error("CRITICAL ERROR: AlaSQL failed to load.");
         throw new Error("Falha crítica: O motor de banco de dados (AlaSQL) não pôde ser carregado."); 
     }
 
-    // Criar Tabelas SQL - [total] escapado
     try {
         runSql(`CREATE TABLE IF NOT EXISTS products (id STRING PRIMARY KEY, code STRING, name STRING, price NUMBER, costPrice NUMBER, stock NUMBER, category STRING, unit STRING, imageUrl STRING, wholesalePrice NUMBER, wholesaleMinQuantity NUMBER, ncm STRING, cfop STRING, cest STRING, taxRate NUMBER)`);
         runSql(`CREATE TABLE IF NOT EXISTS sales (id STRING PRIMARY KEY, timestamp NUMBER, [total] NUMBER, subtotal NUMBER, discount NUMBER, paymentMethod STRING, status STRING, fiscalCode STRING, xmlContent STRING, protocol STRING, environment STRING, clientId STRING, clientName STRING, clientCpf STRING, pointsEarned NUMBER, pointsRedeemed NUMBER, items JSON)`);
@@ -125,11 +130,8 @@ export const db = {
         runSql(`CREATE TABLE IF NOT EXISTS settings (id STRING PRIMARY KEY, data JSON)`);
         runSql(`CREATE TABLE IF NOT EXISTS cash_sessions (id STRING PRIMARY KEY, userId STRING, openedAt NUMBER, closedAt NUMBER, openingBalance NUMBER, closingBalance NUMBER, systemBalance NUMBER, status STRING, movements JSON)`);
         runSql(`CREATE TABLE IF NOT EXISTS stock_movements (id STRING PRIMARY KEY, productId STRING, productName STRING, type STRING, quantity NUMBER, previousStock NUMBER, newStock NUMBER, costPrice NUMBER, timestamp NUMBER, description STRING, userId STRING)`);
-    } catch(e) {
-        console.error("Error creating tables", e);
-    }
+    } catch(e) {}
 
-    // Carregar Dados Salvos
     const savedData = localStorage.getItem(DB_KEY);
     if (savedData) {
         try {
@@ -144,12 +146,9 @@ export const db = {
                     } catch (err) {}
                 }
             });
-        } catch (e) {
-            console.error("Erro ao carregar DB salvo", e);
-        }
+        } catch (e) {}
     }
 
-    // Popular Dados Iniciais se vazio
     try {
         const prodCount = runSql("SELECT COUNT(*) as c FROM products")[0]?.c || 0;
         if (prodCount === 0) INITIAL_PRODUCTS.forEach(p => runSql("INSERT INTO products VALUES ?", [p]));
@@ -168,297 +167,275 @@ export const db = {
     saveDb();
   },
 
-  // --- PARSE NFE ROBUSTO ---
-  parseNFe: (xmlContent: string): ImportPreviewData => {
-    const parser = new DOMParser();
-    const xmlDoc = parser.parseFromString(xmlContent, "text/xml");
-    
-    if (xmlDoc.getElementsByTagName("parsererror").length > 0) {
-        throw new Error("Arquivo XML inválido ou corrompido.");
-    }
-
-    let supplier: Supplier | null = null;
-    let carrier: Carrier | null = null;
-    const items: ImportItem[] = [];
-    let vNF = 0;
-
-    try {
-        const totalTags = xmlDoc.getElementsByTagName('ICMSTot');
-        if (totalTags.length > 0) { 
-            const vNFStr = getTagValue(totalTags[0], 'vNF'); 
-            vNF = vNFStr ? parseFloat(vNFStr) : 0; 
-        }
-    } catch (e) { console.warn("Erro lendo total NFe", e); }
-
-    try {
-        const emitTags = xmlDoc.getElementsByTagName('emit');
-        if (emitTags.length > 0) {
-          const emit = emitTags[0];
-          const cnpj = getTagValue(emit, 'CNPJ');
-          if (cnpj) {
-              supplier = {
-                id: cnpj, 
-                cnpj, 
-                name: getTagValue(emit, 'xNome') || 'Fornecedor Desconhecido', 
-                tradeName: getTagValue(emit, 'xFant'),
-                address: `${getTagValue(emit, 'xLgr')}, ${getTagValue(emit, 'nro')} - ${getTagValue(emit, 'xBairro')}`,
-                city: getTagValue(emit, 'xMun'), 
-                phone: getTagValue(emit, 'fone'), 
-                ie: getTagValue(emit, 'IE')
-              };
-          }
-        }
-    } catch (e) { console.warn("Erro lendo emitente", e); }
-
-    try {
-        const transpTags = xmlDoc.getElementsByTagName('transporta');
-        if (transpTags.length > 0) {
-          const transp = transpTags[0];
-          const cnpj = getTagValue(transp, 'CNPJ');
-          if (cnpj) {
-            carrier = { 
-                id: cnpj, 
-                cnpj, 
-                name: getTagValue(transp, 'xNome') || 'Transportadora', 
-                uf: getTagValue(transp, 'UF') 
-            };
-            const veicTags = xmlDoc.getElementsByTagName('veicTransp');
-            if(veicTags.length > 0) carrier.plate = getTagValue(veicTags[0], 'placa');
-          }
-        }
-    } catch (e) { console.warn("Erro lendo transportadora", e); }
-
-    const detTags = xmlDoc.getElementsByTagName('det');
-    let currentProducts: Product[] = [];
-    try { currentProducts = db.getProducts(); } catch(e) {}
-
-    for (let i = 0; i < detTags.length; i++) {
-      try {
-          const prodTag = detTags[i].getElementsByTagName('prod')[0];
-          if (!prodTag) continue;
-
-          let code = getTagValue(prodTag, 'cEAN');
-          if (!code || code === 'SEM GTIN' || code.trim() === '') {
-              code = getTagValue(prodTag, 'cProd');
-          }
-          if (!code) code = `GEN-${Date.now()}-${i}`;
-
-          const name = getTagValue(prodTag, 'xProd') || 'Produto Sem Nome';
-          const quantity = parseFloat(getTagValue(prodTag, 'qCom')) || 0;
-          const costPrice = parseFloat(getTagValue(prodTag, 'vUnCom')) || 0;
-          const unit = getTagValue(prodTag, 'uCom') || 'UN';
-          
-          const exists = currentProducts.some(p => p.code === code);
-
-          items.push({
-            code, 
-            name, 
-            quantity, 
-            costPrice,
-            unit, 
-            ncm: getTagValue(prodTag, 'NCM'),
-            cfop: getTagValue(prodTag, 'CFOP'), 
-            cest: getTagValue(prodTag, 'CEST'), 
-            isNew: !exists
-          });
-      } catch (errItem) {
-          console.error("Erro ao ler item " + i, errItem);
-      }
-    }
-
-    const today = new Date(); 
-    today.setDate(today.getDate() + 30);
-    
-    return { 
-        supplier, 
-        carrier, 
-        items, 
-        finance: { 
-            totalValue: vNF, 
-            installments: 1, 
-            paymentMethod: 'BOLETO', 
-            firstDueDate: today.toISOString().split('T')[0] 
-        } 
-    };
+  getProducts: (): Product[] => runSql("SELECT * FROM products"),
+  
+  getProductByCode: (code: string): Product | undefined => {
+    const res = runSql("SELECT * FROM products WHERE code = ?", [code]);
+    return res.length > 0 ? res[0] : undefined;
   },
 
-  // --- COMMIT IMPORT SQL ---
-  commitImport: (data: ImportPreviewData) => {
-    const summary = { productsCreated: 0, productsUpdated: 0, financeRecordsCreated: 0 };
-
-    if (data.supplier && data.supplier.cnpj) {
-      try {
-          const existing = runSql("SELECT * FROM suppliers WHERE cnpj = ?", [data.supplier.cnpj]);
-          if (existing.length > 0) {
-             runSql("DELETE FROM suppliers WHERE cnpj = ?", [data.supplier.cnpj]);
+  saveProduct: (product: Product) => {
+      const exists = runSql("SELECT * FROM products WHERE id = ?", [product.id]);
+      if (exists.length > 0) {
+          const oldProduct = exists[0];
+          if (oldProduct.stock !== product.stock) {
+             const diff = product.stock - oldProduct.stock;
+             db.logStockMovement({
+                productId: product.id,
+                productName: product.name,
+                type: diff > 0 ? 'MANUAL_ADJUST' : 'LOSS',
+                quantity: diff,
+                previousStock: oldProduct.stock,
+                newStock: product.stock,
+                costPrice: product.costPrice,
+                description: 'Ajuste Manual'
+             });
           }
-          runSql("INSERT INTO suppliers VALUES ?", [data.supplier]);
-      } catch(e) { console.error("Erro salvando fornecedor", e); }
-    }
-
-    if (data.carrier && data.carrier.cnpj) {
-      try {
-          const existing = runSql("SELECT * FROM carriers WHERE cnpj = ?", [data.carrier.cnpj]);
-          if (existing.length > 0) {
-             runSql("DELETE FROM carriers WHERE cnpj = ?", [data.carrier.cnpj]);
-          }
-          runSql("INSERT INTO carriers VALUES ?", [data.carrier]);
-      } catch(e) { console.error("Erro salvando transportadora", e); }
-    }
-    
-    data.items.forEach(item => {
-      try {
-          const existing = runSql("SELECT * FROM products WHERE code = ?", [item.code]);
-          let productId = '';
-          let previousStock = 0;
-          let productName = item.name;
-          let productToSave: Product;
-          let isUpdate = false;
-
-          if (existing.length > 0) {
-            const prod = existing[0];
-            productId = prod.id;
-            previousStock = prod.stock || 0;
-            isUpdate = true;
-            
-            productToSave = {
-                id: productId,
-                code: prod.code,
-                name: prod.name,
-                price: prod.price,
-                costPrice: item.costPrice, 
-                stock: previousStock + item.quantity, 
-                category: prod.category || 'Geral',
-                unit: prod.unit || 'UN',
-                imageUrl: prod.imageUrl || 'https://via.placeholder.com/200?text=No+Image',
-                wholesalePrice: prod.wholesalePrice || 0,
-                wholesaleMinQuantity: prod.wholesaleMinQuantity || 0,
-                ncm: item.ncm || prod.ncm || '',
-                cfop: item.cfop || prod.cfop || '',
-                cest: item.cest || prod.cest || '',
-                taxRate: prod.taxRate || 0
-            };
-          } else {
-            productId = crypto.randomUUID();
-            productToSave = {
-              id: productId, 
-              code: item.code, 
-              name: item.name,
-              price: item.costPrice * 1.5, 
-              costPrice: item.costPrice, 
-              stock: item.quantity,
-              category: 'Importado XML', 
-              unit: (item.unit || 'UN').substring(0, 2).toUpperCase(),
-              imageUrl: 'https://via.placeholder.com/200?text=No+Image',
-              wholesalePrice: 0,
-              wholesaleMinQuantity: 0,
-              ncm: item.ncm || '', 
-              cfop: item.cfop || '', 
-              cest: item.cest || '',
-              taxRate: 0
-            };
-          }
-
-          if (isUpdate) {
-              runSql("DELETE FROM products WHERE id = ?", [productId]);
-              summary.productsUpdated++;
-          } else {
-              summary.productsCreated++;
-          }
-          runSql("INSERT INTO products VALUES ?", [productToSave]);
-
+          runSql("DELETE FROM products WHERE id = ?", [product.id]);
+          runSql("INSERT INTO products VALUES ?", [product]);
+      } else {
           db.logStockMovement({
-              productId: productId,
-              productName: productName,
-              type: 'ENTRY_XML',
-              quantity: item.quantity,
-              previousStock: previousStock,
-              newStock: previousStock + item.quantity,
-              costPrice: item.costPrice,
-              description: `Entrada via NFe - Forn: ${data.supplier?.name || 'N/A'}`
+              productId: product.id,
+              productName: product.name,
+              type: 'MANUAL_ADJUST',
+              quantity: product.stock,
+              previousStock: 0,
+              newStock: product.stock,
+              costPrice: product.costPrice,
+              description: 'Cadastro Inicial'
           });
-      } catch (e) {
-          console.error("Erro ao salvar produto importado", item.code, e);
+          runSql("INSERT INTO products VALUES ?", [product]);
       }
-    });
+      saveDb();
+  },
 
-    if (data.finance.totalValue > 0) {
+  deleteProduct: (id: string) => {
+      runSql("DELETE FROM products WHERE id = ?", [id]);
+      saveDb();
+  },
+
+  downloadExcelTemplate: () => {
+      if (!window.XLSX) { alert("Biblioteca Excel não carregada."); return; }
+      const ws = window.XLSX.utils.json_to_sheet([
+          { code: '7890001', name: 'Produto Exemplo', price: 10.00, costPrice: 5.00, stock: 100, category: 'Geral', unit: 'UN', wholesalePrice: 0, wholesaleMinQuantity: 0 }
+      ]);
+      const wb = window.XLSX.utils.book_new();
+      window.XLSX.utils.book_append_sheet(wb, ws, "Modelo");
+      window.XLSX.writeFile(wb, "modelo_produtos.xlsx");
+  },
+
+  exportProductsToExcel: () => {
+      if (!window.XLSX) { alert("Biblioteca Excel não carregada."); return; }
+      const products = runSql("SELECT * FROM products");
+      const ws = window.XLSX.utils.json_to_sheet(products);
+      const wb = window.XLSX.utils.book_new();
+      window.XLSX.utils.book_append_sheet(wb, ws, "Produtos");
+      window.XLSX.writeFile(wb, "estoque.xlsx");
+  },
+
+  importProductsFromExcel: async (file: File): Promise<string> => {
+      return new Promise((resolve, reject) => {
+          if (!window.XLSX) return reject("Biblioteca Excel não carregada.");
+          const reader = new FileReader();
+          reader.onload = (e) => {
+              try {
+                  const data = e.target?.result;
+                  const workbook = window.XLSX.read(data, { type: 'binary' });
+                  const firstSheet = workbook.SheetNames[0];
+                  const excelRows = window.XLSX.utils.sheet_to_json(workbook.Sheets[firstSheet]);
+                  let count = 0;
+                  excelRows.forEach((row: any) => {
+                      if (row.name) {
+                           const code = row.code ? String(row.code) : `IMP${Date.now()}${Math.floor(Math.random()*100)}`;
+                           const existing = runSql("SELECT * FROM products WHERE code = ?", [code]);
+                           const p: Product = {
+                               id: existing.length > 0 ? existing[0].id : crypto.randomUUID(),
+                               code,
+                               name: row.name,
+                               price: parseFloat(row.price) || 0,
+                               costPrice: parseFloat(row.costPrice) || 0,
+                               stock: parseFloat(row.stock) || 0,
+                               category: row.category || 'Geral',
+                               unit: row.unit || 'UN',
+                               imageUrl: 'https://via.placeholder.com/150',
+                               wholesalePrice: parseFloat(row.wholesalePrice) || 0,
+                               wholesaleMinQuantity: parseFloat(row.wholesaleMinQuantity) || 0,
+                               ncm: '', cfop: '', cest: '', taxRate: 0
+                           };
+                           
+                           if (existing.length > 0) {
+                               runSql("DELETE FROM products WHERE id = ?", [p.id]);
+                               runSql("INSERT INTO products VALUES ?", [p]);
+                           } else {
+                               runSql("INSERT INTO products VALUES ?", [p]);
+                           }
+                           count++;
+                      }
+                  });
+                  saveDb();
+                  resolve(`${count} produtos processados.`);
+              } catch (err) {
+                  reject("Erro ao ler arquivo.");
+              }
+          };
+          reader.readAsBinaryString(file);
+      });
+  },
+
+  parseNFe: (xmlContent: string): ImportPreviewData => {
+      const parser = new DOMParser();
+      const xmlDoc = parser.parseFromString(xmlContent, "text/xml");
+      if (xmlDoc.getElementsByTagName("parsererror").length > 0) throw new Error("Arquivo XML inválido.");
+
+      let supplier: Supplier | null = null;
+      let carrier: Carrier | null = null;
+      const items: ImportItem[] = [];
+      let vNF = 0;
+
       try {
-          // Parcelamento Robusto com Resíduo
-          const totalVal = parseFloat(String(data.finance.totalValue));
-          const numInstallments = Math.floor(Math.max(1, parseInt(String(data.finance.installments), 10)));
-          
-          const rawInstallment = totalVal / numInstallments;
-          const baseInstallment = Math.floor(rawInstallment * 100) / 100;
-          
-          const totalDistributed = baseInstallment * numInstallments;
-          const remainder = Math.round((totalVal - totalDistributed) * 100) / 100;
+          const totalTags = xmlDoc.getElementsByTagName('ICMSTot');
+          if (totalTags.length > 0) { 
+              const vNFStr = getTagValue(totalTags[0], 'vNF'); 
+              vNF = vNFStr ? parseFloat(vNFStr) : 0; 
+          }
+      } catch (e) {}
 
-          const baseDate = new Date(data.finance.firstDueDate);
-          baseDate.setMinutes(baseDate.getMinutes() + baseDate.getTimezoneOffset());
+      try {
+          const emitTags = xmlDoc.getElementsByTagName('emit');
+          if (emitTags.length > 0) {
+            const emit = emitTags[0];
+            const cnpj = getTagValue(emit, 'CNPJ');
+            if (cnpj) {
+                supplier = {
+                  id: cnpj, cnpj, name: getTagValue(emit, 'xNome'), tradeName: getTagValue(emit, 'xFant'),
+                  address: `${getTagValue(emit, 'xLgr')}, ${getTagValue(emit, 'nro')}`, city: getTagValue(emit, 'xMun'), phone: getTagValue(emit, 'fone'), ie: getTagValue(emit, 'IE')
+                };
+            }
+          }
+      } catch (e) {}
 
-          for (let i = 0; i < numInstallments; i++) {
-            const dueDate = new Date(baseDate); 
-            dueDate.setMonth(dueDate.getMonth() + i);
+      try {
+          const transpTags = xmlDoc.getElementsByTagName('transporta');
+          if (transpTags.length > 0) {
+            const transp = transpTags[0];
+            const cnpj = getTagValue(transp, 'CNPJ');
+            if (cnpj) {
+              carrier = { id: cnpj, cnpj, name: getTagValue(transp, 'xNome'), uf: getTagValue(transp, 'UF') };
+              const veicTags = xmlDoc.getElementsByTagName('veicTransp');
+              if(veicTags.length > 0) carrier.plate = getTagValue(veicTags[0], 'placa');
+            }
+          }
+      } catch (e) {}
+
+      const detTags = xmlDoc.getElementsByTagName('det');
+      let currentProducts: Product[] = [];
+      try { currentProducts = db.getProducts(); } catch(e) {}
+
+      for (let i = 0; i < detTags.length; i++) {
+        try {
+            const prodTag = detTags[i].getElementsByTagName('prod')[0];
+            if (!prodTag) continue;
+            let code = getTagValue(prodTag, 'cEAN');
+            if (!code || code === 'SEM GTIN') code = getTagValue(prodTag, 'cProd') || `GEN-${i}`;
             
-            let currentAmount = baseInstallment;
-            if (i === 0) currentAmount += remainder;
+            items.push({
+              code, 
+              name: getTagValue(prodTag, 'xProd'), 
+              quantity: parseFloat(getTagValue(prodTag, 'qCom')) || 0, 
+              costPrice: parseFloat(getTagValue(prodTag, 'vUnCom')) || 0,
+              unit: getTagValue(prodTag, 'uCom'), 
+              ncm: getTagValue(prodTag, 'NCM'), cfop: getTagValue(prodTag, 'CFOP'), cest: getTagValue(prodTag, 'CEST'), 
+              isNew: !currentProducts.some(p => p.code === code)
+            });
+        } catch (errItem) {}
+      }
 
-            const finRec = {
-              id: crypto.randomUUID(), 
-              type: 'DESPESA',
-              description: `Compra NFe - ${data.supplier?.name || 'Fornecedor'} (Parc ${i + 1}/${numInstallments})`,
-              amount: Number(currentAmount.toFixed(2)), 
-              date: dueDate.getTime(), 
-              category: 'Fornecedores'
+      const today = new Date(); today.setDate(today.getDate() + 30);
+      return { supplier, carrier, items, finance: { totalValue: vNF, installments: 1, paymentMethod: 'BOLETO', firstDueDate: today.toISOString().split('T')[0] } };
+  },
+
+  commitImport: (data: ImportPreviewData) => {
+      const summary = { productsCreated: 0, productsUpdated: 0, financeRecordsCreated: 0 };
+      
+      if (data.supplier && data.supplier.cnpj) {
+        try {
+            const existing = runSql("SELECT * FROM suppliers WHERE cnpj = ?", [data.supplier.cnpj]);
+            if (existing.length > 0) runSql("DELETE FROM suppliers WHERE cnpj = ?", [data.supplier.cnpj]);
+            runSql("INSERT INTO suppliers VALUES ?", [data.supplier]);
+        } catch(e) {}
+      }
+      
+      data.items.forEach(item => {
+        try {
+            const existing = runSql("SELECT * FROM products WHERE code = ?", [item.code]);
+            let productId = existing.length > 0 ? existing[0].id : crypto.randomUUID();
+            let stock = existing.length > 0 ? (existing[0].stock || 0) : 0;
+            
+            const productToSave: Product = {
+                id: productId,
+                code: item.code,
+                name: item.name,
+                price: existing.length > 0 ? existing[0].price : item.costPrice * 1.5,
+                costPrice: item.costPrice,
+                stock: stock + item.quantity,
+                category: existing.length > 0 ? existing[0].category : 'Importado',
+                unit: item.unit,
+                wholesalePrice: existing.length > 0 ? existing[0].wholesalePrice : 0,
+                wholesaleMinQuantity: existing.length > 0 ? existing[0].wholesaleMinQuantity : 0,
+                ncm: item.ncm, cfop: item.cfop, cest: item.cest, taxRate: 0,
+                imageUrl: existing.length > 0 ? existing[0].imageUrl : 'https://via.placeholder.com/200?text=No+Image'
             };
-            runSql("INSERT INTO financial VALUES ?", [finRec]);
-            summary.financeRecordsCreated++;
-          }
-      } catch(e) { console.error("Erro gerando financeiro", e); }
-    }
 
-    saveDb();
-    return summary;
-  },
+            runSql("DELETE FROM products WHERE id = ?", [productId]);
+            runSql("INSERT INTO products VALUES ?", [productToSave]);
+            
+            if(existing.length > 0) summary.productsUpdated++; else summary.productsCreated++;
 
-  // --- RESTO DO SISTEMA ---
-  logStockMovement: (movement: Omit<StockMovement, 'id' | 'timestamp' | 'userId'>) => {
-    try {
-        const currentUser = db.auth.getSession();
-        const newMovement: StockMovement = {
-            id: crypto.randomUUID(),
-            timestamp: Date.now(),
-            userId: currentUser?.name || 'Sistema',
-            ...movement
-        };
-        runSql("INSERT INTO stock_movements VALUES ?", [newMovement]);
-        saveDb();
-    } catch(e) { console.error("Log Kardex error", e); }
-  },
+            db.logStockMovement({
+                productId: productId, productName: item.name, type: 'ENTRY_XML', quantity: item.quantity,
+                previousStock: stock, newStock: stock + item.quantity, costPrice: item.costPrice, description: 'Entrada NFe'
+            });
+        } catch (e) {}
+      });
+      
+      if (data.finance.totalValue > 0) {
+        try {
+            const totalVal = parseFloat(String(data.finance.totalValue));
+            const numInstallments = Math.floor(Math.max(1, parseInt(String(data.finance.installments), 10)));
+            const rawInstallment = totalVal / numInstallments;
+            const baseInstallment = Math.floor(rawInstallment * 100) / 100;
+            const remainder = Math.round((totalVal - (baseInstallment * numInstallments)) * 100) / 100;
+            const baseDate = new Date(data.finance.firstDueDate);
+            baseDate.setMinutes(baseDate.getMinutes() + baseDate.getTimezoneOffset());
 
-  getStockMovements: (productId?: string): StockMovement[] => {
-      try {
-          let sql = "SELECT * FROM stock_movements";
-          if (productId) {
-              sql += ` WHERE productId = '${productId}'`;
-          }
-          sql += " ORDER BY timestamp DESC";
-          return runSql(sql);
-      } catch(e) { return []; }
+            for (let i = 0; i < numInstallments; i++) {
+                const dueDate = new Date(baseDate); 
+                dueDate.setMonth(dueDate.getMonth() + i);
+                let currentAmount = baseInstallment;
+                if (i === 0) currentAmount += remainder;
+                const finRec = { id: crypto.randomUUID(), type: 'DESPESA', description: `Compra NFe (Parc ${i + 1}/${numInstallments})`, amount: currentAmount, date: dueDate.getTime(), category: 'Fornecedores' };
+                runSql("INSERT INTO financial VALUES ?", [finRec]);
+                summary.financeRecordsCreated++;
+            }
+        } catch(e) {}
+      }
+
+      saveDb();
+      return summary;
   },
 
   getSuppliers: (): Supplier[] => runSql("SELECT * FROM suppliers"),
   getCarriers: (): Carrier[] => runSql("SELECT * FROM carriers"),
   getSales: (): Sale[] => runSql("SELECT * FROM sales"),
 
-  // --- CORE VENDA ATUALIZADO (F8 / Não Fiscal) ---
+  // --- FUNÇÃO DE VENDA ATUALIZADA (Suporte a Cancelamento e Não Fiscal) ---
   createSale: async (
       items: CartItem[], 
       paymentMethod: PaymentMethod, 
       client: Client | null = null, 
       redeemPoints: number = 0,
-      isFiscal: boolean = true // NOVO PARÂMETRO
+      isFiscal: boolean = true,
+      status: 'COMPLETED' | 'CANCELLED' | 'PENDING' = 'COMPLETED'
   ): Promise<Sale> => {
     const session = db.cash.getCurrentSession();
     if (!session) throw new Error("Caixa Fechado! É necessário abrir o caixa antes de realizar vendas.");
@@ -472,26 +449,31 @@ export const db = {
     let xml = '';
     let protocol = '';
 
-    // Se for Fiscal, gera NFC-e e incrementa nota.
-    // Se não for (F8), gera identificador interno e não mexe na sequência fiscal.
-    if (isFiscal) {
+    if (status === 'CANCELLED') {
+         const uniqueId = Date.now().toString().slice(-8);
+         accessKey = `CANCELADA-${uniqueId}`;
+         xml = '';
+         protocol = 'VENDA CANCELADA';
+    } else if (isFiscal) {
         const nNF = settings.nextNfcNumber || 1;
         accessKey = nfcService.generateAccessKey(settings, nNF);
         xml = nfcService.generateXML(settings, items, nNF, finalTotal, paymentMethod, accessKey);
         const transmission = await nfcService.transmitNFCe(xml, settings);
         protocol = transmission.protocol;
-        
         settings.nextNfcNumber = nNF + 1;
         db.saveSettings(settings);
     } else {
+        // Não Fiscal (F8)
         const uniqueId = Date.now().toString().slice(-8);
         accessKey = `RECIBO-NAO-FISCAL-${uniqueId}`;
         xml = '';
         protocol = 'SEM VALOR FISCAL';
     }
 
-    const pointsEarned = Math.floor(finalTotal / 10);
-    if (client && client.id !== 'default') {
+    // Pontos só se completada
+    const pointsEarned = (status === 'COMPLETED') ? Math.floor(finalTotal / 10) : 0;
+    
+    if (status === 'COMPLETED' && client && client.id !== 'default') {
         client.points = (client.points || 0) - redeemPoints + pointsEarned;
         client.lastPurchase = Date.now();
         db.saveClient(client);
@@ -505,7 +487,7 @@ export const db = {
       subtotal: subtotal,
       discount: discount,
       paymentMethod,
-      status: 'COMPLETED',
+      status: status,
       fiscalCode: accessKey,
       xmlContent: xml,
       protocol: protocol,
@@ -519,318 +501,76 @@ export const db = {
 
     runSql("INSERT INTO sales VALUES ?", [newSale]);
 
-    items.forEach(item => {
-      const res = runSql("SELECT * FROM products WHERE id = ?", [item.id]);
-      if (res.length > 0) {
-        const product = res[0];
-        const previous = product.stock;
-        product.stock -= item.quantity;
-        
-        runSql("UPDATE products SET stock = ? WHERE id = ?", [product.stock, product.id]);
-
-        db.logStockMovement({
-            productId: product.id,
-            productName: product.name,
-            type: 'SALE',
-            quantity: -item.quantity,
-            previousStock: previous,
-            newStock: product.stock,
-            costPrice: product.costPrice,
-            description: isFiscal ? `Venda NFC-e #${accessKey.slice(-8)}` : 'Venda Não Fiscal (F8)'
+    // Só baixa estoque e gera financeiro se for COMPLETED
+    if (status === 'COMPLETED') {
+        items.forEach(item => {
+          const res = runSql("SELECT * FROM products WHERE id = ?", [item.id]);
+          if (res.length > 0) {
+            const product = res[0];
+            const previous = product.stock;
+            product.stock -= item.quantity;
+            runSql("UPDATE products SET stock = ? WHERE id = ?", [product.stock, product.id]);
+            db.logStockMovement({
+                productId: product.id,
+                productName: product.name,
+                type: 'SALE',
+                quantity: -item.quantity,
+                previousStock: previous,
+                newStock: product.stock,
+                costPrice: product.costPrice,
+                description: isFiscal ? `Venda NFC-e #${accessKey.slice(-8)}` : 'Venda Não Fiscal (F8)'
+            });
+          }
         });
-      }
-    });
 
-    db.addFinancialRecord({
-      id: crypto.randomUUID(),
-      type: 'RECEITA',
-      description: isFiscal ? `Venda PDV (${paymentMethod})` : `Venda Rápida F8 (${paymentMethod})`,
-      amount: finalTotal,
-      date: Date.now(),
-      category: 'Vendas'
-    });
+        db.addFinancialRecord({
+          id: crypto.randomUUID(),
+          type: 'RECEITA',
+          description: isFiscal ? `Venda PDV (${paymentMethod})` : `Venda Rápida F8 (${paymentMethod})`,
+          amount: finalTotal,
+          date: Date.now(),
+          category: 'Vendas'
+        });
+    }
 
     saveDb();
     return newSale;
   },
 
-  auth: {
-    login: (userId: string, pin: string): User | null => {
-        const users = runSql("SELECT * FROM users WHERE id = ? AND pin = ?", [userId, pin]);
-        if (users.length > 0) {
-            localStorage.setItem(SESSION_KEY, JSON.stringify(users[0]));
-            return users[0];
-        }
-        return null;
-    },
-    logout: () => {
-        localStorage.removeItem(SESSION_KEY);
-    },
-    getSession: (): User | null => {
-        const session = localStorage.getItem(SESSION_KEY);
-        return session ? JSON.parse(session) : null;
-    }
-  },
-
-  cash: {
-      getSessions: (): CashSession[] => runSql("SELECT * FROM cash_sessions ORDER BY openedAt DESC"),
-      getCurrentSession: (): CashSession | undefined => {
-          const sessions = runSql("SELECT * FROM cash_sessions WHERE status = 'OPEN'");
-          return sessions.length > 0 ? sessions[0] : undefined;
-      },
-      openSession: (openingBalance: number, userId: string): CashSession => {
-          const current = db.cash.getCurrentSession();
-          if(current) throw new Error("Já existe um caixa aberto.");
-          const newSession: CashSession = { id: crypto.randomUUID(), userId, openedAt: Date.now(), openingBalance, status: 'OPEN', movements: [] };
-          runSql("INSERT INTO cash_sessions VALUES ?", [newSession]);
-          saveDb();
-          return newSession;
-      },
-      addMovement: (type: 'SANGRIA' | 'SUPRIMENTO', amount: number, description: string, userId: string) => {
-          const sessions = runSql("SELECT * FROM cash_sessions WHERE status = 'OPEN'");
-          if(sessions.length === 0) throw new Error("Nenhum caixa aberto.");
-          const session = sessions[0];
-          
-          const movements = session.movements || [];
-          const movement: CashMovement = { id: crypto.randomUUID(), type, amount, description, timestamp: Date.now(), userId };
-          movements.push(movement);
-          
-          runSql("UPDATE cash_sessions SET movements = ? WHERE id = ?", [movements, session.id]);
-          
-          if(type === 'SANGRIA') {
-              db.addFinancialRecord({ id: crypto.randomUUID(), type: 'DESPESA', category: 'Sangria de Caixa', description: `Sangria PDV: ${description}`, amount: amount, date: Date.now() });
-          }
-          saveDb();
-      },
-      closeSession: (closingBalance: number) => {
-          const sessions = runSql("SELECT * FROM cash_sessions WHERE status = 'OPEN'");
-          if(sessions.length === 0) throw new Error("Nenhum caixa aberto.");
-          const session = sessions[0];
-          
-          const sales = db.getSales();
-          const cashSales = sales.filter(s => s.timestamp >= session.openedAt && s.paymentMethod === 'DINHEIRO').reduce((acc, s) => acc + s.total, 0);
-          
-          const movements = session.movements || [];
-          const totalSangrias = movements.filter((m: any) => m.type === 'SANGRIA').reduce((acc: any, m: any) => acc + m.amount, 0);
-          const totalSuprimentos = movements.filter((m: any) => m.type === 'SUPRIMENTO').reduce((acc: any, m: any) => acc + m.amount, 0);
-          
-          const systemBalance = session.openingBalance + cashSales + totalSuprimentos - totalSangrias;
-          
-          runSql("UPDATE cash_sessions SET status = 'CLOSED', closedAt = ?, closingBalance = ?, systemBalance = ? WHERE id = ?", 
-              [Date.now(), closingBalance, systemBalance, session.id]);
-          saveDb();
-          return { systemBalance, diff: closingBalance - systemBalance };
-      }
-  },
-
-  // USERS
   getUsers: (): User[] => runSql("SELECT * FROM users"),
   saveUser: (user: User) => {
-    const exists = runSql("SELECT id FROM users WHERE id = ?", [user.id]);
+    const exists = runSql("SELECT * FROM users WHERE id = ?", [user.id]);
     if (exists.length > 0) {
-      runSql("UPDATE users SET name = ?, role = ?, pin = ? WHERE id = ?", [user.name, user.role, user.pin, user.id]);
+        runSql("UPDATE users SET name = ?, role = ?, pin = ? WHERE id = ?", [user.name, user.role, user.pin, user.id]);
     } else {
-      runSql("INSERT INTO users VALUES ?", [user]);
+        runSql("INSERT INTO users VALUES ?", [user]);
     }
     saveDb();
   },
-  deleteUser: (id: string) => {
-    runSql("DELETE FROM users WHERE id = ?", [id]);
-    saveDb();
-  },
-
-  // FINANCIAL
+  deleteUser: (id: string) => { runSql("DELETE FROM users WHERE id = ?", [id]); saveDb(); },
   getFinancialRecords: (): FinancialRecord[] => runSql("SELECT * FROM financial"),
-  addFinancialRecord: (record: FinancialRecord) => {
-    runSql("INSERT INTO financial VALUES ?", [record]);
-    saveDb();
+  addFinancialRecord: (record: FinancialRecord) => { runSql("INSERT INTO financial VALUES ?", [record]); saveDb(); },
+  deleteFinancialRecord: (id: string) => { runSql("DELETE FROM financial WHERE id = ?", [id]); saveDb(); },
+  getSettings: (): AppSettings => { const res = runSql("SELECT * FROM settings WHERE id = 'main'"); if (res.length > 0) return { ...DEFAULT_SETTINGS, ...res[0].data }; return DEFAULT_SETTINGS; },
+  saveSettings: (settings: AppSettings) => { const exists = runSql("SELECT * FROM settings WHERE id = 'main'"); if (exists.length > 0) { runSql("UPDATE settings SET data = ? WHERE id = 'main'", [settings]); } else { runSql("INSERT INTO settings VALUES ?", [{id: 'main', data: settings}]); } saveDb(); },
+  createBackup: () => { if (!window.alasql) return "{}"; const dump: Record<string, any[]> = {}; try { TABLE_LIST.forEach(tableName => { try { dump[tableName] = window.alasql(`SELECT * FROM ${tableName}`); } catch(e) {} }); return JSON.stringify(dump, null, 2); } catch(e) { return "{}"; } },
+  restoreBackup: (jsonData: string) => { try { const data = JSON.parse(jsonData); Object.keys(data).forEach(table => { runSql(`DELETE FROM ${table}`); data[table].forEach((row: any) => runSql(`INSERT INTO ${table} VALUES ?`, [row])); }); saveDb(); return true; } catch (e) { return false; } },
+  
+  getClients: () => runSql("SELECT * FROM clients"),
+  getClientByCpf: (cpf: string) => { const c = runSql("SELECT * FROM clients"); return c.find((x:any) => x.cpf.replace(/\D/g,'') === cpf.replace(/\D/g,'')); },
+  saveClient: (c: Client) => { runSql("DELETE FROM clients WHERE id = ?", [c.id]); runSql("INSERT INTO clients VALUES ?", [c]); saveDb(); },
+  logStockMovement: (m: any) => { runSql("INSERT INTO stock_movements VALUES ?", [{...m, id: crypto.randomUUID(), timestamp: Date.now(), userId: db.auth.getSession()?.name || 'System'}]); saveDb(); },
+  getStockMovements: (pid?: string) => { let s = "SELECT * FROM stock_movements"; if(pid) s+=` WHERE productId='${pid}'`; s+=" ORDER BY timestamp DESC"; return runSql(s); },
+  auth: {
+      login: (uid: string, pin: string) => { const u = runSql("SELECT * FROM users WHERE id = ? AND pin = ?", [uid, pin]); if(u.length) { localStorage.setItem(SESSION_KEY, JSON.stringify(u[0])); return u[0]; } return null; },
+      logout: () => localStorage.removeItem(SESSION_KEY),
+      getSession: () => JSON.parse(localStorage.getItem(SESSION_KEY) || 'null')
   },
-  deleteFinancialRecord: (id: string) => {
-    runSql("DELETE FROM financial WHERE id = ?", [id]);
-    saveDb();
-  },
-
-  getClients: (): Client[] => runSql("SELECT * FROM clients"),
-  getClientByCpf: (cpf: string): Client | undefined => {
-      const cleanCpf = cpf.replace(/\D/g, '');
-      const clients = runSql("SELECT * FROM clients");
-      return clients.find((c: Client) => c.cpf.replace(/\D/g, '') === cleanCpf);
-  },
-  saveClient: (client: Client) => {
-      const exists = runSql("SELECT id FROM clients WHERE id = ?", [client.id]);
-      if (exists.length > 0) {
-          runSql("UPDATE clients SET name = ?, cpf = ?, phone = ?, points = ?, lastPurchase = ? WHERE id = ?", 
-              [client.name, client.cpf, client.phone, client.points, client.lastPurchase, client.id]);
-      } else {
-          runSql("INSERT INTO clients VALUES ?", [client]);
-      }
-      saveDb();
-  },
-
-  getProducts: (): Product[] => runSql("SELECT * FROM products"),
-  getProductByCode: (code: string): Product | undefined => {
-    const res = runSql("SELECT * FROM products WHERE code = ?", [code.trim()]);
-    return res.length > 0 ? res[0] : undefined;
-  },
-  saveProduct: (product: Product) => {
-    const exists = runSql("SELECT * FROM products WHERE id = ?", [product.id]);
-    if (exists.length > 0) {
-      const oldProduct = exists[0];
-      if (oldProduct.stock !== product.stock) {
-         const diff = product.stock - oldProduct.stock;
-         db.logStockMovement({
-            productId: product.id, productName: product.name, type: diff > 0 ? 'MANUAL_ADJUST' : 'LOSS',
-            quantity: diff, previousStock: oldProduct.stock, newStock: product.stock, costPrice: product.costPrice, description: 'Ajuste Manual'
-         });
-      }
-      runSql("DELETE FROM products WHERE id = ?", [product.id]);
-      runSql("INSERT INTO products VALUES ?", [product]);
-    } else {
-      db.logStockMovement({
-          productId: product.id, productName: product.name, type: 'MANUAL_ADJUST',
-          quantity: product.stock, previousStock: 0, newStock: product.stock, costPrice: product.costPrice, description: 'Cadastro Inicial'
-      });
-      runSql("INSERT INTO products VALUES ?", [product]);
-    }
-    saveDb();
-  },
-  deleteProduct: (id: string) => {
-    runSql("DELETE FROM products WHERE id = ?", [id]);
-    saveDb();
-  },
-
-  downloadExcelTemplate: () => {
-    const XLSX = window.XLSX;
-    if (!XLSX) return alert("Erro: Biblioteca Excel não carregada.");
-    const headers = ["CODIGO_BARRAS*", "NOME_PRODUTO*", "PRECO_VENDA", "PRECO_CUSTO", "ESTOQUE", "UNIDADE", "CATEGORIA", "NCM", "CFOP", "CEST"];
-    const exampleRow = ["7891234567890", "Produto Exemplo 1KG", 10.50, 5.00, 100, "UN", "Alimentos", "12345678", "5102", "1234567"];
-    const ws = XLSX.utils.aoa_to_sheet([headers, exampleRow]);
-    const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, "Modelo Importação");
-    XLSX.writeFile(wb, "Modelo_Importacao_Produtos.xlsx");
-  },
-
-  exportProductsToExcel: () => {
-    const XLSX = window.XLSX;
-    if (!XLSX) return alert("Erro: Biblioteca Excel não carregada.");
-    const products = db.getProducts();
-    const exportData = products.map(p => ({
-      "CODIGO_BARRAS*": p.code, "NOME_PRODUTO*": p.name, "PRECO_VENDA": p.price, "PRECO_CUSTO": p.costPrice,
-      "ESTOQUE": p.stock, "UNIDADE": p.unit, "CATEGORIA": p.category, "NCM": p.ncm || '', "CFOP": p.cfop || '', "CEST": p.cest || ''
-    }));
-    const ws = XLSX.utils.json_to_sheet(exportData);
-    const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, "Produtos");
-    XLSX.writeFile(wb, `Estoque_MercadoMaster_${new Date().toISOString().slice(0,10)}.xlsx`);
-  },
-
-  importProductsFromExcel: async (file: File): Promise<string> => {
-    return new Promise((resolve, reject) => {
-      const XLSX = window.XLSX;
-      if (!XLSX) return reject("Biblioteca Excel indisponível.");
-      const reader = new FileReader();
-      reader.onload = (e) => {
-        try {
-          const data = new Uint8Array(e.target?.result as ArrayBuffer);
-          const workbook = XLSX.read(data, { type: 'array' });
-          const sheet = workbook.Sheets[workbook.SheetNames[0]];
-          const jsonData = XLSX.utils.sheet_to_json(sheet);
-          if (jsonData.length === 0) return reject("Planilha vazia.");
-          let created = 0, updated = 0;
-          jsonData.forEach((row: any) => {
-            const code = (row["CODIGO_BARRAS*"] || row["CODIGO"] || row["CODE"])?.toString();
-            const name = row["NOME_PRODUTO*"] || row["NOME"] || row["NAME"];
-            if (!code || !name) return;
-            const existing = runSql("SELECT * FROM products WHERE code = ?", [code]);
-            
-            let productData: Product;
-            
-            if (existing.length > 0) {
-               const prod = existing[0];
-               const stockFromExcel = row["ESTOQUE"] !== undefined ? Number(row["ESTOQUE"]) : prod.stock;
-               
-               if(stockFromExcel !== prod.stock) {
-                   db.logStockMovement({
-                       productId: prod.id, productName: prod.name, type: 'MANUAL_ADJUST', quantity: stockFromExcel - prod.stock,
-                       previousStock: prod.stock, newStock: stockFromExcel, costPrice: prod.costPrice, description: 'Importação Excel'
-                   });
-               }
-               
-               productData = {
-                  id: prod.id,
-                  code: prod.code,
-                  name,
-                  price: Number(row["PRECO_VENDA"] || prod.price),
-                  costPrice: Number(row["PRECO_CUSTO"] || prod.costPrice),
-                  stock: stockFromExcel,
-                  unit: row["UNIDADE"] || prod.unit,
-                  category: row["CATEGORIA"] || prod.category,
-                  ncm: row["NCM"] ? String(row["NCM"]) : prod.ncm,
-                  cfop: row["CFOP"] ? String(row["CFOP"]) : prod.cfop,
-                  cest: row["CEST"] ? String(row["CEST"]) : prod.cest,
-                  imageUrl: prod.imageUrl,
-                  wholesalePrice: prod.wholesalePrice || 0,
-                  wholesaleMinQuantity: prod.wholesaleMinQuantity || 0,
-                  taxRate: prod.taxRate || 0
-               };
-               
-               runSql("DELETE FROM products WHERE id = ?", [prod.id]); 
-               runSql("INSERT INTO products VALUES ?", [productData]); 
-               updated++;
-            } else { 
-               const newId = crypto.randomUUID(); const stock = Number(row["ESTOQUE"] || 0);
-               productData = {
-                  id: newId, code, name, price: Number(row["PRECO_VENDA"] || 0), costPrice: Number(row["PRECO_CUSTO"] || 0),
-                  stock: stock, unit: row["UNIDADE"] || 'UN', category: row["CATEGORIA"] || 'Geral',
-                  ncm: row["NCM"] ? String(row["NCM"]) : undefined, cfop: row["CFOP"] ? String(row["CFOP"]) : undefined,
-                  cest: row["CEST"] ? String(row["CEST"]) : undefined, imageUrl: 'https://via.placeholder.com/200?text=No+Image',
-                  wholesalePrice: 0, wholesaleMinQuantity: 0, taxRate: 0
-               };
-               runSql("INSERT INTO products VALUES ?", [productData]);
-               db.logStockMovement({ productId: newId, productName: name, type: 'MANUAL_ADJUST', quantity: stock, previousStock: 0, newStock: stock, costPrice: productData.costPrice, description: 'Importação Excel (Novo)' });
-               created++; 
-            }
-          });
-          saveDb();
-          resolve(`Importação: ${created} novos, ${updated} atualizados.`);
-        } catch (err) { reject("Erro ao processar Excel."); }
-      };
-      reader.readAsArrayBuffer(file);
-    });
-  },
-
-  getSettings: (): AppSettings => {
-    const res = runSql("SELECT * FROM settings WHERE id = 'main'");
-    if (res.length > 0) return { ...DEFAULT_SETTINGS, ...res[0].data };
-    return DEFAULT_SETTINGS;
-  },
-  saveSettings: (settings: AppSettings) => {
-      const exists = runSql("SELECT * FROM settings WHERE id = 'main'");
-      if (exists.length > 0) {
-          runSql("UPDATE settings SET data = ? WHERE id = 'main'", [settings]);
-      } else {
-          runSql("INSERT INTO settings VALUES ?", [{id: 'main', data: settings}]);
-      }
-      saveDb();
-  },
-
-  createBackup: () => {
-    if (!window.alasql) return "{}";
-    const dump: Record<string, any[]> = {};
-    try {
-        TABLE_LIST.forEach(tableName => { try { dump[tableName] = window.alasql(`SELECT * FROM ${tableName}`); } catch(e) {} });
-        return JSON.stringify(dump, null, 2);
-    } catch(e) { return "{}"; }
-  },
-  restoreBackup: (jsonData: string) => {
-    try {
-      const data = JSON.parse(jsonData);
-      Object.keys(data).forEach(table => {
-           runSql(`DELETE FROM ${table}`);
-           data[table].forEach((row: any) => runSql(`INSERT INTO ${table} VALUES ?`, [row]));
-      });
-      saveDb();
-      return true;
-    } catch (e) { return false; }
+  cash: {
+      getSessions: () => runSql("SELECT * FROM cash_sessions ORDER BY openedAt DESC"),
+      getCurrentSession: () => runSql("SELECT * FROM cash_sessions WHERE status = 'OPEN'")[0],
+      openSession: (bal: number, uid: string) => { const s = {id: crypto.randomUUID(), userId: uid, openedAt: Date.now(), openingBalance: bal, status: 'OPEN', movements: []}; runSql("INSERT INTO cash_sessions VALUES ?", [s]); saveDb(); return s; },
+      addMovement: (type: string, amt: number, desc: string, uid: string) => { const s = db.cash.getCurrentSession(); if(!s) throw new Error("Caixa fechado"); const m = {id: crypto.randomUUID(), type, amount: amt, description: desc, timestamp: Date.now(), userId: uid}; const movs = s.movements || []; movs.push(m); runSql("UPDATE cash_sessions SET movements = ? WHERE id = ?", [movs, s.id]); saveDb(); },
+      closeSession: (closed: number) => { const s = db.cash.getCurrentSession(); if(!s) throw new Error("Caixa fechado"); const sys = s.openingBalance; runSql("UPDATE cash_sessions SET status='CLOSED', closingBalance=?, systemBalance=? WHERE id=?", [closed, sys, s.id]); saveDb(); return {systemBalance: sys, diff: 0}; }
   }
 };

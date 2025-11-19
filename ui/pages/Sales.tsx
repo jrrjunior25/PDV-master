@@ -2,7 +2,7 @@
 import React, { useEffect, useState } from 'react';
 import { db } from '../../infra/db';
 import { Sale } from '../../core/types';
-import { Calendar, CreditCard, Search, Receipt, CheckCircle } from 'lucide-react';
+import { Calendar, CreditCard, Search, Receipt, CheckCircle, XCircle } from 'lucide-react';
 
 export const Sales: React.FC = () => {
   const [sales, setSales] = useState<Sale[]>([]);
@@ -41,16 +41,24 @@ export const Sales: React.FC = () => {
                     <div 
                         key={sale.id} 
                         onClick={() => setSelectedSale(sale)}
-                        className={`p-4 cursor-pointer transition-all hover:bg-slate-50 ${selectedSale?.id === sale.id ? 'bg-indigo-50 border-l-4 border-l-indigo-600' : 'border-l-4 border-l-transparent'}`}
+                        className={`p-4 cursor-pointer transition-all hover:bg-slate-50 ${selectedSale?.id === sale.id ? 'bg-indigo-50 border-l-4 border-l-indigo-600' : 'border-l-4 border-l-transparent'} ${sale.status === 'CANCELLED' ? 'opacity-60' : ''}`}
                     >
                         <div className="flex justify-between items-start mb-1">
                             <div>
-                                <span className="font-bold text-slate-800">#{sale.fiscalCode?.slice(-6)}</span>
-                                <span className="ml-2 px-2 py-0.5 rounded-full bg-green-100 text-green-700 text-xs font-bold flex-inline items-center gap-1">
-                                    <CheckCircle size={10} /> CONCLUÍDA
-                                </span>
+                                <span className={`font-bold ${sale.status === 'CANCELLED' ? 'text-red-600 line-through' : 'text-slate-800'}`}>#{sale.fiscalCode?.slice(-6)}</span>
+                                {sale.status === 'CANCELLED' ? (
+                                    <span className="ml-2 px-2 py-0.5 rounded-full bg-red-100 text-red-700 text-xs font-bold flex-inline items-center gap-1">
+                                        <XCircle size={10} /> CANCELADA
+                                    </span>
+                                ) : (
+                                    <span className="ml-2 px-2 py-0.5 rounded-full bg-green-100 text-green-700 text-xs font-bold flex-inline items-center gap-1">
+                                        <CheckCircle size={10} /> CONCLUÍDA
+                                    </span>
+                                )}
                             </div>
-                            <span className="font-bold text-indigo-600">R$ {sale.total.toFixed(2)}</span>
+                            <span className={`font-bold ${sale.status === 'CANCELLED' ? 'text-red-600' : 'text-indigo-600'}`}>
+                                R$ {sale.total.toFixed(2)}
+                            </span>
                         </div>
                         <div className="flex justify-between text-xs text-slate-500">
                             <div className="flex items-center gap-1">
@@ -73,8 +81,12 @@ export const Sales: React.FC = () => {
 
       <div className="w-1/2 bg-white rounded-xl border border-slate-200 p-8 shadow-sm overflow-y-auto flex flex-col items-center bg-slate-50">
         {selectedSale ? (
-            <div className="w-full max-w-sm bg-white shadow-xl p-6 font-mono text-sm relative">
+            <div className={`w-full max-w-sm bg-white shadow-xl p-6 font-mono text-sm relative ${selectedSale.status === 'CANCELLED' ? 'grayscale opacity-80' : ''}`}>
                 <div className="absolute top-0 left-0 w-full h-2 bg-[linear-gradient(45deg,transparent_25%,#e2e8f0_25%,#e2e8f0_50%,transparent_50%,transparent_75%,#e2e8f0_75%,#e2e8f0_100%)] bg-[length:10px_10px]"></div>
+
+                {selectedSale.status === 'CANCELLED' && (
+                    <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 border-4 border-red-600 text-red-600 font-bold text-4xl px-4 py-2 -rotate-45 opacity-50">CANCELADO</div>
+                )}
 
                 <div className="text-center border-b border-dashed border-slate-300 pb-4 mb-4 mt-2">
                     <h3 className="font-bold text-xl text-slate-900">MERCADOMASTER</h3>
@@ -117,9 +129,11 @@ export const Sales: React.FC = () => {
 
                 <div className="text-center text-[10px] text-slate-400">
                     <p>{new Date(selectedSale.timestamp).toLocaleString()}</p>
-                    <p className="mt-2">Chave de Acesso NFC-e:</p>
+                    <p className="mt-2">Chave de Acesso:</p>
                     <p className="break-all font-mono bg-slate-50 p-1">{selectedSale.fiscalCode}</p>
-                    <p className="mt-4 font-bold">OBRIGADO PELA PREFERÊNCIA!</p>
+                    <p className="mt-4 font-bold">
+                        {selectedSale.status === 'CANCELLED' ? 'VENDA CANCELADA - SEM VALOR' : 'OBRIGADO PELA PREFERÊNCIA!'}
+                    </p>
                 </div>
 
                  <div className="absolute bottom-0 left-0 w-full h-2 bg-[linear-gradient(45deg,transparent_25%,#e2e8f0_25%,#e2e8f0_50%,transparent_50%,transparent_75%,#e2e8f0_75%,#e2e8f0_100%)] bg-[length:10px_10px]"></div>
@@ -127,7 +141,7 @@ export const Sales: React.FC = () => {
         ) : (
             <div className="h-full flex flex-col items-center justify-center text-slate-400">
                 <Receipt size={64} className="mb-4 opacity-20" />
-                <p>Selecione uma venda para visualizar o cupom fiscal.</p>
+                <p>Selecione uma venda para visualizar o cupom.</p>
             </div>
         )}
       </div>

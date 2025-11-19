@@ -2,7 +2,7 @@
 import React, { useEffect, useState, useRef } from 'react';
 import { db } from '../../infra/db';
 import { AppSettings } from '../../core/types';
-import { Save, Upload, Download, Server, FileCheck, CreditCard, Printer, Store, CheckCircle, Key } from 'lucide-react';
+import { Save, Upload, Download, Server, FileCheck, CreditCard, Printer, Store, CheckCircle, Key, Image as ImageIcon } from 'lucide-react';
 
 export const SettingsPage: React.FC = () => {
   const [settings, setSettings] = useState<AppSettings | null>(null);
@@ -74,6 +74,22 @@ export const SettingsPage: React.FC = () => {
                 certificateData: base64Data 
             });
             setFeedback('Certificado carregado e pronto para salvar.');
+        };
+        reader.readAsDataURL(file);
+    }
+  };
+
+  const handleLogoUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (file && settings) {
+        const reader = new FileReader();
+        reader.onload = (e) => {
+            const base64Data = e.target?.result as string;
+            setSettings({ 
+                ...settings, 
+                logoData: base64Data 
+            });
+            setFeedback('Logomarca carregada.');
         };
         reader.readAsDataURL(file);
     }
@@ -158,6 +174,27 @@ export const SettingsPage: React.FC = () => {
                     className="w-full border border-slate-300 rounded-lg p-2 focus:ring-2 focus:ring-indigo-500 outline-none"
                   />
                   <p className="text-xs text-slate-400 mt-1">A cidade é extraída automaticamente do endereço para o PIX.</p>
+                </div>
+                
+                <div className="col-span-2">
+                    <label className="block text-sm font-medium text-slate-700 mb-1">Logomarca (Exibida no PDV)</label>
+                    <div className="border-2 border-dashed border-slate-300 rounded-lg p-4 flex flex-col items-center justify-center bg-slate-50">
+                        {settings.logoData ? (
+                             <div className="flex flex-col items-center gap-2">
+                                <img src={settings.logoData} alt="Logo" className="h-20 object-contain" />
+                                <label className="cursor-pointer text-indigo-600 text-xs font-medium hover:underline">
+                                    Alterar Imagem
+                                    <input type="file" className="hidden" accept="image/*" onChange={handleLogoUpload} />
+                                </label>
+                             </div>
+                        ) : (
+                            <label className="cursor-pointer flex flex-col items-center gap-2 text-slate-400 hover:text-indigo-600 transition-colors">
+                                <ImageIcon size={24} />
+                                <span className="text-sm font-medium">Carregar Logomarca</span>
+                                <input type="file" className="hidden" accept="image/*" onChange={handleLogoUpload} />
+                            </label>
+                        )}
+                    </div>
                 </div>
               </div>
             </div>

@@ -140,6 +140,7 @@ export interface AppSettings {
   nextNfcNumber: number;
   cscToken: string;
   cscId: string;
+  logoData?: string; // Base64 da logomarca
 }
 
 export interface CashMovement {
