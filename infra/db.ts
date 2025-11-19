@@ -1,4 +1,4 @@
-import { Product, Sale, CartItem, PaymentMethod, User, FinancialRecord, AppSettings, Supplier, Carrier, ImportPreviewData, ImportItem, CashSession, CashMovement, Client, StockMovement } from '../core/types';
+import { Product, Sale, CartItem, PaymentMethod, User, FinancialRecord, AppSettings, Supplier, Carrier, ImportPreviewData, ImportItem, CashSession, CashMovement, Client, StockMovement } from '../../core/types';
 import { NfcService } from './services/nfcService';
 
 const DB_KEY = 'mercadomaster_sql_dump_v1';
@@ -391,7 +391,6 @@ export const db = {
           const rawInstallment = totalVal / numInstallments;
           const baseInstallment = Math.floor(rawInstallment * 100) / 100;
           
-          // Resíduo de centavos
           const totalDistributed = baseInstallment * numInstallments;
           const remainder = Math.round((totalVal - totalDistributed) * 100) / 100;
 
@@ -403,7 +402,7 @@ export const db = {
             dueDate.setMonth(dueDate.getMonth() + i);
             
             let currentAmount = baseInstallment;
-            if (i === 0) currentAmount += remainder; // Adiciona resíduo na 1ª parcela
+            if (i === 0) currentAmount += remainder;
 
             const finRec = {
               id: crypto.randomUUID(), 
@@ -447,6 +446,112 @@ export const db = {
           sql += " ORDER BY timestamp DESC";
           return runSql(sql);
       } catch(e) { return []; }
+  },
+
+  getSuppliers: (): Supplier[] => runSql("SELECT * FROM suppliers"),
+  getCarriers: (): Carrier[] => runSql("SELECT * FROM carriers"),
+  getSales: (): Sale[] => runSql("SELECT * FROM sales"),
+
+  // --- CORE VENDA ATUALIZADO (F8 / Não Fiscal) ---
+  createSale: async (
+      items: CartItem[], 
+      paymentMethod: PaymentMethod, 
+      client: Client | null = null, 
+      redeemPoints: number = 0,
+      isFiscal: boolean = true // NOVO PARÂMETRO
+  ): Promise<Sale> => {
+    const session = db.cash.getCurrentSession();
+    if (!session) throw new Error("Caixa Fechado! É necessário abrir o caixa antes de realizar vendas.");
+    
+    const subtotal = items.reduce((acc, item) => acc + item.total, 0);
+    const discount = redeemPoints > 0 ? redeemPoints : 0; 
+    const finalTotal = Math.max(0, subtotal - discount);
+    const settings = db.getSettings();
+    
+    let accessKey = '';
+    let xml = '';
+    let protocol = '';
+
+    // Se for Fiscal, gera NFC-e e incrementa nota.
+    // Se não for (F8), gera identificador interno e não mexe na sequência fiscal.
+    if (isFiscal) {
+        const nNF = settings.nextNfcNumber || 1;
+        accessKey = nfcService.generateAccessKey(settings, nNF);
+        xml = nfcService.generateXML(settings, items, nNF, finalTotal, paymentMethod, accessKey);
+        const transmission = await nfcService.transmitNFCe(xml, settings);
+        protocol = transmission.protocol;
+        
+        settings.nextNfcNumber = nNF + 1;
+        db.saveSettings(settings);
+    } else {
+        const uniqueId = Date.now().toString().slice(-8);
+        accessKey = `RECIBO-NAO-FISCAL-${uniqueId}`;
+        xml = '';
+        protocol = 'SEM VALOR FISCAL';
+    }
+
+    const pointsEarned = Math.floor(finalTotal / 10);
+    if (client && client.id !== 'default') {
+        client.points = (client.points || 0) - redeemPoints + pointsEarned;
+        client.lastPurchase = Date.now();
+        db.saveClient(client);
+    }
+
+    const newSale: Sale = {
+      id: crypto.randomUUID(),
+      timestamp: Date.now(),
+      items, 
+      total: finalTotal,
+      subtotal: subtotal,
+      discount: discount,
+      paymentMethod,
+      status: 'COMPLETED',
+      fiscalCode: accessKey,
+      xmlContent: xml,
+      protocol: protocol,
+      environment: settings.environment,
+      clientId: client?.id,
+      clientName: client?.name,
+      clientCpf: client?.cpf,
+      pointsEarned,
+      pointsRedeemed: redeemPoints
+    };
+
+    runSql("INSERT INTO sales VALUES ?", [newSale]);
+
+    items.forEach(item => {
+      const res = runSql("SELECT * FROM products WHERE id = ?", [item.id]);
+      if (res.length > 0) {
+        const product = res[0];
+        const previous = product.stock;
+        product.stock -= item.quantity;
+        
+        runSql("UPDATE products SET stock = ? WHERE id = ?", [product.stock, product.id]);
+
+        db.logStockMovement({
+            productId: product.id,
+            productName: product.name,
+            type: 'SALE',
+            quantity: -item.quantity,
+            previousStock: previous,
+            newStock: product.stock,
+            costPrice: product.costPrice,
+            description: isFiscal ? `Venda NFC-e #${accessKey.slice(-8)}` : 'Venda Não Fiscal (F8)'
+        });
+      }
+    });
+
+    db.addFinancialRecord({
+      id: crypto.randomUUID(),
+      type: 'RECEITA',
+      description: isFiscal ? `Venda PDV (${paymentMethod})` : `Venda Rápida F8 (${paymentMethod})`,
+      amount: finalTotal,
+      date: Date.now(),
+      category: 'Vendas'
+    });
+
+    saveDb();
+    return newSale;
   },
 
   auth: {
@@ -516,6 +621,33 @@ export const db = {
           saveDb();
           return { systemBalance, diff: closingBalance - systemBalance };
       }
+  },
+
+  // USERS
+  getUsers: (): User[] => runSql("SELECT * FROM users"),
+  saveUser: (user: User) => {
+    const exists = runSql("SELECT id FROM users WHERE id = ?", [user.id]);
+    if (exists.length > 0) {
+      runSql("UPDATE users SET name = ?, role = ?, pin = ? WHERE id = ?", [user.name, user.role, user.pin, user.id]);
+    } else {
+      runSql("INSERT INTO users VALUES ?", [user]);
+    }
+    saveDb();
+  },
+  deleteUser: (id: string) => {
+    runSql("DELETE FROM users WHERE id = ?", [id]);
+    saveDb();
+  },
+
+  // FINANCIAL
+  getFinancialRecords: (): FinancialRecord[] => runSql("SELECT * FROM financial"),
+  addFinancialRecord: (record: FinancialRecord) => {
+    runSql("INSERT INTO financial VALUES ?", [record]);
+    saveDb();
+  },
+  deleteFinancialRecord: (id: string) => {
+    runSql("DELETE FROM financial WHERE id = ?", [id]);
+    saveDb();
   },
 
   getClients: (): Client[] => runSql("SELECT * FROM clients"),
@@ -667,78 +799,6 @@ export const db = {
     });
   },
 
-  getSuppliers: (): Supplier[] => runSql("SELECT * FROM suppliers"),
-  getCarriers: (): Carrier[] => runSql("SELECT * FROM carriers"),
-
-  getSales: (): Sale[] => runSql("SELECT * FROM sales"),
-
-  createSale: async (items: CartItem[], paymentMethod: PaymentMethod, client: Client | null = null, redeemPoints: number = 0): Promise<Sale> => {
-    const session = db.cash.getCurrentSession();
-    if (!session) throw new Error("Caixa Fechado!");
-    
-    const subtotal = items.reduce((acc, item) => acc + item.total, 0);
-    const discount = redeemPoints > 0 ? redeemPoints : 0; 
-    const finalTotal = Math.max(0, subtotal - discount);
-    const settings = db.getSettings();
-    const nNF = settings.nextNfcNumber || 1;
-    
-    const accessKey = nfcService.generateAccessKey(settings, nNF);
-    const xml = nfcService.generateXML(settings, items, nNF, finalTotal, paymentMethod, accessKey);
-    const transmission = await nfcService.transmitNFCe(xml, settings);
-
-    const pointsEarned = Math.floor(finalTotal / 10);
-    if (client && client.id !== 'default') {
-        client.points = (client.points || 0) - redeemPoints + pointsEarned;
-        client.lastPurchase = Date.now();
-        db.saveClient(client);
-    }
-
-    const newSale: Sale = {
-      id: crypto.randomUUID(), timestamp: Date.now(), items, total: finalTotal, subtotal: subtotal,
-      discount: discount, paymentMethod, status: 'COMPLETED', fiscalCode: accessKey,
-      xmlContent: xml, protocol: transmission.protocol, environment: settings.environment,
-      clientId: client?.id, clientName: client?.name, clientCpf: client?.cpf,
-      pointsEarned, pointsRedeemed: redeemPoints
-    };
-
-    runSql("INSERT INTO sales VALUES ?", [newSale]);
-
-    items.forEach(item => {
-      const res = runSql("SELECT * FROM products WHERE id = ?", [item.id]);
-      if (res.length > 0) {
-        const product = res[0];
-        const previous = product.stock;
-        product.stock -= item.quantity;
-        runSql("UPDATE products SET stock = ? WHERE id = ?", [product.stock, product.id]);
-        db.logStockMovement({
-            productId: product.id, productName: product.name, type: 'SALE', quantity: -item.quantity,
-            previousStock: previous, newStock: product.stock, costPrice: product.costPrice, description: `Venda NFC-e #${nNF}`
-        });
-      }
-    });
-
-    db.addFinancialRecord({ id: crypto.randomUUID(), type: 'RECEITA', description: `Venda PDV #${nNF} (${paymentMethod})`, amount: finalTotal, date: Date.now(), category: 'Vendas' });
-    settings.nextNfcNumber = nNF + 1;
-    db.saveSettings(settings);
-    saveDb();
-    return newSale;
-  },
-
-  getUsers: (): User[] => runSql("SELECT * FROM users"),
-  saveUser: (user: User) => {
-    const exists = runSql("SELECT * FROM users WHERE id = ?", [user.id]);
-    if (exists.length > 0) {
-        runSql("UPDATE users SET name = ?, role = ?, pin = ? WHERE id = ?", [user.name, user.role, user.pin, user.id]);
-    } else {
-        runSql("INSERT INTO users VALUES ?", [user]);
-    }
-    saveDb();
-  },
-  deleteUser: (id: string) => { runSql("DELETE FROM users WHERE id = ?", [id]); saveDb(); },
-  getFinancialRecords: (): FinancialRecord[] => runSql("SELECT * FROM financial"),
-  addFinancialRecord: (record: FinancialRecord) => { runSql("INSERT INTO financial VALUES ?", [record]); saveDb(); },
-  deleteFinancialRecord: (id: string) => { runSql("DELETE FROM financial WHERE id = ?", [id]); saveDb(); },
-
   getSettings: (): AppSettings => {
     const res = runSql("SELECT * FROM settings WHERE id = 'main'");
     if (res.length > 0) return { ...DEFAULT_SETTINGS, ...res[0].data };
@@ -746,8 +806,11 @@ export const db = {
   },
   saveSettings: (settings: AppSettings) => {
       const exists = runSql("SELECT * FROM settings WHERE id = 'main'");
-      if (exists.length > 0) { runSql("UPDATE settings SET data = ? WHERE id = 'main'", [settings]); } 
-      else { runSql("INSERT INTO settings VALUES ?", [{id: 'main', data: settings}]); }
+      if (exists.length > 0) {
+          runSql("UPDATE settings SET data = ? WHERE id = 'main'", [settings]);
+      } else {
+          runSql("INSERT INTO settings VALUES ?", [{id: 'main', data: settings}]);
+      }
       saveDb();
   },
 

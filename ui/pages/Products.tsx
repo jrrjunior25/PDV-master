@@ -1,3 +1,4 @@
+
 import React, { useEffect, useState, useRef } from 'react';
 import { db } from '../../infra/db';
 import { Product, ImportPreviewData, StockMovement } from '../../core/types';
@@ -174,7 +175,6 @@ export const Products: React.FC = () => {
       const printWindow = window.open('', '_blank', 'width=900,height=600');
       if (!printWindow) return alert("Pop-up bloqueado. Permita pop-ups para imprimir.");
 
-      // Gera o array final de etiquetas repetindo o produto conforme a quantidade
       const labelsToRender: Product[] = [];
       printQueue.forEach(item => {
           for (let i = 0; i < item.quantity; i++) {
@@ -182,13 +182,9 @@ export const Products: React.FC = () => {
           }
       });
 
-      // OTIMIZAÇÃO DO CÓDIGO DE BARRAS:
-      // 1. width: 1.6 -> Barras mais largas facilitam leitura.
-      // 2. height: 35 -> Mais altura para o laser pegar.
-      // 3. fontSize: 11 -> Números legíveis.
-      // 4. displayValue: true -> Mostra os números pelo JsBarcode, alinhados.
-      // 5. Remoção de elementos HTML extras para limpar a área.
-
+      // CONFIGURAÇÃO OTIMIZADA PARA LEITURA DE CÓDIGO DE BARRAS
+      // width: 1.35 (Barras mais grossas)
+      // height: 30 (Barras mais altas)
       const htmlContent = `
         <html>
           <head>
@@ -206,14 +202,14 @@ export const Products: React.FC = () => {
                 font-family: 'Arial', sans-serif;
                 background: white;
                 margin: 0;
-                padding: 1mm; /* Margem de segurança da impressora */
+                padding: 0.5mm; 
               }
               .grid-container {
                 display: grid;
                 grid-template-columns: repeat(3, 33mm);
-                column-gap: 2mm; /* Espaço entre colunas */
-                row-gap: 2mm; /* Espaço entre linhas */
-                width: 105mm; /* Largura total aproximada do papel de 3 colunas */
+                column-gap: 2mm;
+                row-gap: 2mm;
+                width: 105mm;
               }
               .label {
                 width: 33mm;
@@ -223,31 +219,31 @@ export const Products: React.FC = () => {
                 display: flex;
                 flex-direction: column;
                 align-items: center;
-                justify-content: center;
+                justify-content: flex-start;
                 text-align: center;
                 page-break-inside: avoid;
-                /* padding: 1mm; Removido padding interno para ganhar espaço */
+                padding-top: 1px;
               }
               .label-name {
-                font-size: 7px; /* Fonte menor para caber nomes longos */
+                font-size: 7px;
                 font-weight: bold;
                 line-height: 1;
-                max-height: 7px; /* Apenas uma linha de nome */
+                max-height: 7px; 
                 overflow: hidden;
                 white-space: nowrap;
                 text-overflow: ellipsis;
-                width: 95%;
-                margin-bottom: 1px;
+                width: 96%;
+                margin-bottom: 0px;
               }
               .label-price {
-                font-size: 10px;
+                font-size: 9px;
                 font-weight: 900;
                 margin-bottom: 0px;
               }
-              /* SVG ocupa quase toda a etiqueta */
+              /* O SVG ocupa o máximo possível */
               svg.barcode {
-                width: 100% !important;
-                height: auto !important; 
+                width: 95% !important;
+                height: auto !important;
                 display: block;
               }
             </style>
@@ -256,13 +252,13 @@ export const Products: React.FC = () => {
             <div class="grid-container">
               ${labelsToRender.map(p => `
                 <div class="label">
-                  <div class="label-name">${p.name.substring(0, 30)}</div>
+                  <div class="label-name">${p.name.substring(0, 25)}</div>
                   <div class="label-price">R$ ${p.price.toFixed(2)}</div>
                   <svg class="barcode"
                     jsbarcode-format="EAN13"
-                    jsbarcode-value="${p.code.padStart(13, '0').substring(0, 12)}"
-                    jsbarcode-width="1.3" 
-                    jsbarcode-height="25"
+                    jsbarcode-value="${p.code.replace(/\D/g,'').padStart(13, '0').substring(0, 12)}"
+                    jsbarcode-width="1.35" 
+                    jsbarcode-height="30"
                     jsbarcode-fontsize="9"
                     jsbarcode-margin="0"
                     jsbarcode-textmargin="0"
@@ -276,7 +272,7 @@ export const Products: React.FC = () => {
               JsBarcode(".barcode").init();
               setTimeout(() => {
                  window.print();
-              }, 800); // Tempo um pouco maior para garantir renderização
+              }, 800);
             </script>
           </body>
         </html>

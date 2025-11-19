@@ -1,10 +1,9 @@
-
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { Link } from 'react-router-dom';
 import { db } from '../../infra/db';
 import { PixPayload } from '../../infra/services/pixService';
 import { Product, CartItem, PaymentMethod, Sale, CashSession, Client } from '../../core/types';
-import { Search, CreditCard, Banknote, Smartphone, RefreshCw, CheckCircle, ArrowLeft, Copy, Lock, Coins, ArrowRightLeft, FileText, User, Star, Gift, X } from 'lucide-react';
+import { Search, CreditCard, Banknote, Smartphone, RefreshCw, CheckCircle, ArrowLeft, Copy, Lock, Coins, ArrowRightLeft, FileText, User, Star, Gift, X, Printer } from 'lucide-react';
 import QRCode from 'qrcode';
 
 export const POS: React.FC = () => {
@@ -89,6 +88,126 @@ export const POS: React.FC = () => {
       QRCode.toCanvas(pixCanvasRef.current, pixPayload, { width: 256, margin: 2, color: { dark: '#000000', light: '#FFFFFF' } }, (error) => { if (error) console.error(error); });
     }
   }, [showPixQr, pixPayload]);
+
+  // --- IMPRESSÃO DE CUPOM (F8) ---
+  const handlePrintReceipt = useCallback((saleData: Sale | null = null) => {
+      const sale = saleData || lastSaleData;
+      if (!sale) {
+          alert("Nenhuma venda recente para imprimir.");
+          return;
+      }
+
+      const settings = db.getSettings();
+      const printWindow = window.open('', '_blank', 'width=350,height=600');
+
+      if (!printWindow) {
+          alert("Pop-up bloqueado. Permita pop-ups para imprimir.");
+          return;
+      }
+
+      const itemsHtml = sale.items.map(item => `
+          <div style="display: flex; justify-content: space-between; font-size: 12px;">
+              <span style="flex: 1;">${item.name.substring(0, 20)}</span>
+              <span style="width: 30px; text-align: right;">${item.quantity}</span>
+              <span style="width: 50px; text-align: right;">${item.total.toFixed(2)}</span>
+          </div>
+      `).join('');
+
+      const htmlContent = `
+        <html>
+          <head>
+            <title>Imprimir Cupom</title>
+            <style>
+              @media print {
+                @page { margin: 0; }
+                body { margin: 0; padding: 5px; }
+              }
+              body {
+                font-family: 'Courier New', monospace;
+                width: ${settings.printerWidth === 58 ? '58mm' : '78mm'};
+                margin: 0 auto;
+                color: #000;
+                background: #fff;
+              }
+              .text-center { text-align: center; }
+              .text-right { text-align: right; }
+              .bold { font-weight: bold; }
+              .line { border-bottom: 1px dashed #000; margin: 5px 0; }
+              .header { font-size: 14px; margin-bottom: 5px; }
+              .sub-header { font-size: 12px; }
+              .items-header { display: flex; justify-content: space-between; font-size: 12px; font-weight: bold; border-bottom: 1px dashed #000; margin-bottom: 5px; }
+              .total-section { margin-top: 10px; font-size: 14px; }
+              .footer { margin-top: 20px; font-size: 10px; text-align: center; }
+            </style>
+          </head>
+          <body>
+            <div class="text-center header bold">${settings.companyName.toUpperCase()}</div>
+            <div class="text-center sub-header">CNPJ: ${settings.cnpj}</div>
+            <div class="text-center sub-header">${settings.address}</div>
+            <div class="line"></div>
+            <div class="text-center bold" style="font-size: 12px;">*** ${sale.protocol === 'SEM VALOR FISCAL' ? 'RECIBO NÃO FISCAL' : 'DOCUMENTO AUXILIAR'} ***</div>
+            <div class="text-center sub-header">Nº ${sale.fiscalCode?.slice(-8) || '000000'}</div>
+            <div class="line"></div>
+            
+            <div class="items-header">
+                <span style="flex: 1;">ITEM</span>
+                <span style="width: 30px; text-align: right;">QTD</span>
+                <span style="width: 50px; text-align: right;">VALOR</span>
+            </div>
+            
+            ${itemsHtml}
+            
+            <div class="line"></div>
+            
+            <div class="total-section">
+                <div style="display: flex; justify-content: space-between;">
+                    <span>SUBTOTAL:</span>
+                    <span>R$ ${sale.subtotal.toFixed(2)}</span>
+                </div>
+                ${sale.discount > 0 ? `
+                <div style="display: flex; justify-content: space-between;">
+                    <span>DESCONTO:</span>
+                    <span>- R$ ${sale.discount.toFixed(2)}</span>
+                </div>` : ''}
+                <div style="display: flex; justify-content: space-between;" class="bold">
+                    <span>TOTAL A PAGAR:</span>
+                    <span>R$ ${sale.total.toFixed(2)}</span>
+                </div>
+            </div>
+
+            <div class="line"></div>
+            <div style="display: flex; justify-content: space-between; font-size: 12px;">
+                <span>FORMA PAGTO:</span>
+                <span class="bold">${sale.paymentMethod}</span>
+            </div>
+
+            ${sale.clientName ? `
+            <div class="line"></div>
+            <div style="font-size: 12px;">
+                CLIENTE: ${sale.clientName}<br/>
+                CPF: ${sale.clientCpf}
+            </div>` : ''}
+
+            <div class="footer">
+                ${new Date(sale.timestamp).toLocaleString()}<br/>
+                OP: ${db.auth.getSession()?.name || 'ADMIN'}<br/>
+                <br/>
+                MERCADOMASTER SISTEMAS
+            </div>
+            
+            <script>
+              setTimeout(() => {
+                 window.print();
+                 window.close();
+              }, 500);
+            </script>
+          </body>
+        </html>
+      `;
+
+      printWindow.document.write(htmlContent);
+      printWindow.document.close();
+  }, [lastSaleData]);
 
   const openIdentifyModal = () => {
       setIdentifyCpf('');
@@ -232,9 +351,21 @@ export const POS: React.FC = () => {
     else { alert(`Produto não encontrado: ${inputCode}`); setInputCode(''); }
   };
 
+  // ATALHO F8: Venda Rápida (Não Fiscal, Dinheiro)
+  const handleFastNonFiscalCheckout = async () => {
+      if (cart.length === 0) return alert("Carrinho vazio.");
+      // Finaliza direto em dinheiro como Não Fiscal
+      const sale = await finalizeSale(PaymentMethod.DINHEIRO, false);
+      // Imprime imediatamente
+      if (sale) {
+          setTimeout(() => handlePrintReceipt(sale), 500);
+      }
+  };
+
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'F5') { e.preventDefault(); setPriceCheckTerm(''); setIsPriceCheckOpen(true); }
+      if (e.key === 'F8') { e.preventDefault(); handleFastNonFiscalCheckout(); } // Atalho F8
       if (e.key === 'F9') { e.preventDefault(); setIsFunctionsMenuOpen(true); }
       if (e.key === 'F11') { e.preventDefault(); openIdentifyModal(); }
       if (e.key === 'F12') { e.preventDefault(); startCheckoutFlow(); }
@@ -248,7 +379,7 @@ export const POS: React.FC = () => {
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [cart, showPixQr, closingReport, currentClient]);
+  }, [cart, showPixQr, closingReport, currentClient, handlePrintReceipt, useCashback]);
 
   const cartSubtotal = cart.reduce((acc, item) => acc + item.total, 0);
   const maxPointsUsable = currentClient ? Math.min(currentClient.points, Math.floor(cartSubtotal)) : 0;
@@ -278,10 +409,10 @@ export const POS: React.FC = () => {
     finalizeSale(method);
   };
 
-  const finalizeSale = async (method: PaymentMethod) => {
+  const finalizeSale = async (method: PaymentMethod, isFiscal: boolean = true) => {
     try {
-      setMsg('EMITINDO NFC-e...');
-      const sale = await db.createSale(cart, method, currentClient, discountValue);
+      setMsg(isFiscal ? 'EMITINDO NFC-e...' : 'GERANDO RECIBO...');
+      const sale = await db.createSale(cart, method, currentClient, discountValue, isFiscal);
       setLastSaleData(sale);
       setSuccessModal(true);
       setIsPaymentModalOpen(false);
@@ -296,9 +427,11 @@ export const POS: React.FC = () => {
         setLastSaleData(null);
         setCurrentClient(null);
       }, 5000);
+      return sale;
     } catch (error: any) {
       alert("Erro na venda: " + error.message);
       setMsg('ERRO NA VENDA');
+      return null;
     }
   };
 
@@ -425,6 +558,7 @@ export const POS: React.FC = () => {
         <div className="flex gap-4">
             <button className="bg-slate-800 px-3 py-1 rounded hover:bg-pdv-accent hover:text-white transition-colors">F1 - AJUDA</button>
             <button onClick={() => setIsPriceCheckOpen(true)} className="bg-slate-800 px-3 py-1 rounded hover:bg-pdv-accent hover:text-white transition-colors">F5 - CONSULTAR</button>
+            <button onClick={handleFastNonFiscalCheckout} className="bg-yellow-600 text-white px-3 py-1 rounded hover:bg-yellow-700 transition-colors shadow-md font-bold flex items-center gap-1"><Printer size={14} /> F8 - NÃO FISCAL</button>
             <button onClick={() => setIsFunctionsMenuOpen(true)} className="bg-slate-800 px-3 py-1 rounded hover:bg-pdv-accent hover:text-white text-pdv-accent transition-colors">F9 - FUNÇÕES</button>
             <button onClick={startCheckoutFlow} className="bg-pdv-accent text-white px-4 py-1 rounded hover:bg-blue-600 transition-colors shadow-lg shadow-blue-900/50">F12 - FECHAR VENDA</button>
         </div>
@@ -568,10 +702,10 @@ export const POS: React.FC = () => {
       )}
       
       {isFunctionsMenuOpen && ( <div className="fixed inset-0 bg-black/80 z-[80] flex items-center justify-center backdrop-blur-sm"><div className="bg-white rounded-xl p-6 w-[500px] shadow-2xl"><div className="flex justify-between items-center mb-6 border-b border-slate-200 pb-4"><h2 className="text-2xl font-bold text-slate-800 flex items-center gap-2"><Coins className="text-pdv-accent" /> Funções do Caixa</h2><button onClick={() => setIsFunctionsMenuOpen(false)}><X className="text-slate-400" /></button></div><div className="grid grid-cols-2 gap-4"><button onClick={() => { setIsFunctionsMenuOpen(false); setIsBleedModalOpen(true); }} className="flex flex-col items-center justify-center p-6 bg-red-50 border-2 border-red-100 rounded-xl hover:border-red-500 hover:bg-red-100 transition-all group"><ArrowRightLeft size={32} className="text-red-500 mb-2 group-hover:scale-110 transition-transform" /><span className="font-bold text-red-700">SANGRIA</span></button><button onClick={() => { setIsFunctionsMenuOpen(false); setIsCloseCashModalOpen(true); }} className="flex flex-col items-center justify-center p-6 bg-slate-50 border-2 border-slate-100 rounded-xl hover:border-slate-500 hover:bg-slate-100 transition-all group"><FileText size={32} className="text-slate-500 mb-2 group-hover:scale-110 transition-transform" /><span className="font-bold text-slate-700">FECHAR CAIXA</span></button></div></div></div> )}
-      {isBleedModalOpen && ( <div className="fixed inset-0 bg-black/80 z-[90] flex items-center justify-center"><div className="bg-white rounded-xl p-8 w-96 text-center shadow-2xl border-t-4 border-red-500 text-slate-800"><h2 className="text-2xl font-bold text-red-600 mb-4">Sangria de Caixa</h2><form onSubmit={handleBleed}><div className="mb-4 text-left"><label className="block text-xs font-bold text-slate-500 uppercase mb-1">Valor</label><input type="number" step="0.01" className="w-full text-lg font-bold border border-slate-300 rounded p-2" value={bleedAmount} onChange={e => setBleedAmount(e.target.value)} autoFocus /></div><div className="mb-6 text-left"><label className="block text-xs font-bold text-slate-500 uppercase mb-1">Motivo</label><input type="text" className="w-full border border-slate-300 rounded p-2" value={bleedReason} onChange={e => setBleedReason(e.target.value)} /></div><div className="flex gap-2"><button type="button" onClick={() => setIsBleedModalOpen(false)} className="flex-1 py-2 bg-slate-200 rounded">CANCELAR</button><button type="submit" className="flex-1 py-2 bg-red-600 text-white rounded font-bold">CONFIRMAR</button></div></form></div></div> )}
-      {isCloseCashModalOpen && ( <div className="fixed inset-0 bg-black/90 z-[100] flex items-center justify-center"><div className="bg-white rounded-xl w-[500px] shadow-2xl overflow-hidden text-slate-800"><div className="bg-slate-800 p-4 text-white flex justify-between items-center"><h2 className="text-xl font-bold">Fechamento</h2>{!closingReport && <button onClick={() => setIsCloseCashModalOpen(false)}><X /></button>}</div>{!closingReport ? (<div className="p-8"><p className="text-slate-500 mb-6 text-center">Conte o dinheiro.</p><div className="mb-6"><label className="block text-xs font-bold text-slate-500 uppercase mb-1">Valor Contado</label><input type="number" step="0.01" className="w-full text-center text-4xl font-bold border-2 border-slate-300 rounded-lg p-4" value={closingCounted} onChange={e => setClosingCounted(e.target.value)} autoFocus /></div><button onClick={handleCloseCash} className="w-full bg-pdv-accent text-white font-bold py-4 rounded-lg">ENCERRAR</button></div>) : (<div className="p-6"><div className="space-y-4"><div className="flex justify-between"><span>Sistema:</span><span className="font-bold">R$ {closingReport.systemBalance.toFixed(2)}</span></div><div className="flex justify-between"><span>Gaveta:</span><span className="font-bold">R$ {parseFloat(closingCounted).toFixed(2)}</span></div><div className={`flex justify-between text-xl font-bold p-3 rounded ${closingReport.diff === 0 ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}><span>Diferença:</span><span>R$ {closingReport.diff.toFixed(2)}</span></div></div><button onClick={confirmCloseAndLogout} className="w-full bg-slate-800 text-white font-bold py-3 rounded mt-6">SAIR</button></div>)}</div></div> )}
+      {isBleedModalOpen && ( <div className="fixed inset-0 bg-black/80 z-[90] flex items-center justify-center"><div className="bg-white rounded-xl p-8 w-96 text-center shadow-2xl border-t-4 border-red-500 text-slate-800"><h2 className="text-2xl font-bold text-red-600 mb-4">Sangria de Caixa</h2><form onSubmit={handleBleed}><div className="mb-4 text-left"><label className="block text-xs font-bold text-slate-500 uppercase mb-1">Valor</label><input type="number" step="0.01" className="w-full text-lg font-bold border border-slate-300 rounded p-2 text-slate-800" value={bleedAmount} onChange={e => setBleedAmount(e.target.value)} autoFocus /></div><div className="mb-6 text-left"><label className="block text-xs font-bold text-slate-500 uppercase mb-1">Motivo</label><input type="text" className="w-full border border-slate-300 rounded p-2 text-slate-800" value={bleedReason} onChange={e => setBleedReason(e.target.value)} /></div><div className="flex gap-2"><button type="button" onClick={() => setIsBleedModalOpen(false)} className="flex-1 py-2 bg-slate-200 rounded text-slate-800">CANCELAR</button><button type="submit" className="flex-1 py-2 bg-red-600 text-white rounded font-bold">CONFIRMAR</button></div></form></div></div> )}
+      {isCloseCashModalOpen && ( <div className="fixed inset-0 bg-black/90 z-[100] flex items-center justify-center"><div className="bg-white rounded-xl w-[500px] shadow-2xl overflow-hidden text-slate-800"><div className="bg-slate-800 p-4 text-white flex justify-between items-center"><h2 className="text-xl font-bold">Fechamento</h2>{!closingReport && <button onClick={() => setIsCloseCashModalOpen(false)}><X /></button>}</div>{!closingReport ? (<div className="p-8"><p className="text-slate-500 mb-6 text-center">Conte o dinheiro.</p><div className="mb-6"><label className="block text-xs font-bold text-slate-500 uppercase mb-1">Valor Contado</label><input type="number" step="0.01" className="w-full text-center text-4xl font-bold border-2 border-slate-300 rounded-lg p-4 text-slate-800" value={closingCounted} onChange={e => setClosingCounted(e.target.value)} autoFocus /></div><button onClick={handleCloseCash} className="w-full bg-pdv-accent text-white font-bold py-4 rounded-lg">ENCERRAR</button></div>) : (<div className="p-6"><div className="space-y-4"><div className="flex justify-between"><span>Sistema:</span><span className="font-bold">R$ {closingReport.systemBalance.toFixed(2)}</span></div><div className="flex justify-between"><span>Gaveta:</span><span className="font-bold">R$ {parseFloat(closingCounted).toFixed(2)}</span></div><div className={`flex justify-between text-xl font-bold p-3 rounded ${closingReport.diff === 0 ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}><span>Diferença:</span><span>R$ {closingReport.diff.toFixed(2)}</span></div></div><button onClick={confirmCloseAndLogout} className="w-full bg-slate-800 text-white font-bold py-3 rounded mt-6">SAIR</button></div>)}</div></div> )}
 
-      {isPriceCheckOpen && ( <div className="fixed inset-0 bg-black/80 z-[100] flex items-center justify-center backdrop-blur-sm p-6"><div className="bg-white rounded-xl w-full max-w-4xl shadow-2xl flex flex-col h-[80vh]"><div className="p-6 border-b bg-slate-50 flex justify-between"><h2 className="text-2xl font-bold text-slate-800">Consulta</h2><button onClick={() => setIsPriceCheckOpen(false)}><X className="text-slate-600"/></button></div><div className="p-6"><input ref={priceCheckInputRef} type="text" className="w-full p-4 text-xl border-2 border-slate-300 rounded-lg uppercase text-slate-800" placeholder="BUSCAR..." value={priceCheckTerm} onChange={e => setPriceCheckTerm(e.target.value)} /></div><div className="flex-1 overflow-y-auto"><table className="w-full text-left text-slate-800"><thead className="bg-slate-100"><tr><th className="p-4">CÓDIGO</th><th className="p-4">PRODUTO</th><th className="p-4 text-right">PREÇO</th><th className="p-4"></th></tr></thead><tbody>{filteredProducts.map(p => (<tr key={p.id} className="border-b hover:bg-slate-50"><td className="p-4 font-mono">{p.code}</td><td className="p-4 font-bold">{p.name}</td><td className="p-4 text-right font-bold text-blue-600">R$ {p.price.toFixed(2)}</td><td className="p-4"><button onClick={() => handleAddFromSearch(p)} className="bg-blue-600 text-white px-3 py-1 rounded text-xs">ADD</button></td></tr>))}</tbody></table></div></div></div> )}
+      {isPriceCheckOpen && ( <div className="fixed inset-0 bg-black/80 z-[100] flex items-center justify-center backdrop-blur-sm p-6"><div className="bg-white rounded-xl w-full max-w-4xl h-[80vh] flex flex-col shadow-2xl"><div className="p-6 border-b bg-slate-50 flex justify-between"><h2 className="text-2xl font-bold text-slate-800">Consulta</h2><button onClick={() => setIsPriceCheckOpen(false)}><X className="text-slate-600"/></button></div><div className="p-6"><input ref={priceCheckInputRef} type="text" className="w-full p-4 text-xl border-2 border-slate-300 rounded-lg uppercase text-slate-800" placeholder="BUSCAR..." value={priceCheckTerm} onChange={e => setPriceCheckTerm(e.target.value)} /></div><div className="flex-1 overflow-y-auto"><table className="w-full text-left text-slate-800"><thead className="bg-slate-100"><tr><th className="p-4">CÓDIGO</th><th className="p-4">PRODUTO</th><th className="p-4 text-right">PREÇO</th><th className="p-4"></th></tr></thead><tbody>{filteredProducts.map(p => (<tr key={p.id} className="border-b hover:bg-slate-50"><td className="p-4 font-mono">{p.code}</td><td className="p-4 font-bold">{p.name}</td><td className="p-4 text-right font-bold text-blue-600">R$ {p.price.toFixed(2)}</td><td className="p-4"><button onClick={() => handleAddFromSearch(p)} className="bg-blue-600 text-white px-3 py-1 rounded text-xs">ADD</button></td></tr>))}</tbody></table></div></div></div> )}
 
       {successModal && (
           <div className="fixed inset-0 bg-pdv-success z-[60] flex flex-col items-center justify-center text-white animate-fade-in">
@@ -580,7 +714,7 @@ export const POS: React.FC = () => {
               
               {lastSaleData && (
                 <div className="mt-8 bg-white/20 px-8 py-6 rounded-lg font-mono text-sm text-center max-w-2xl backdrop-blur-sm">
-                    <p className="mb-2 font-bold text-lg">NFC-e Nº {lastSaleData.fiscalCode?.slice(25,34)}</p>
+                    <p className="mb-2 font-bold text-lg">{lastSaleData.protocol === 'SEM VALOR FISCAL' ? 'RECIBO NÃO FISCAL' : `NFC-e Nº ${lastSaleData.fiscalCode?.slice(25,34)}`}</p>
                     <div className="text-left bg-black/10 p-4 rounded mb-4">
                         {lastSaleData.clientName ? (
                             <>
@@ -589,6 +723,12 @@ export const POS: React.FC = () => {
                             </>
                         ) : <p className="italic opacity-70">Consumidor não identificado</p>}
                     </div>
+                    <button 
+                        onClick={() => handlePrintReceipt(lastSaleData)}
+                        className="mt-4 bg-white text-pdv-success px-6 py-2 rounded-lg font-bold hover:bg-green-50 flex items-center gap-2 mx-auto"
+                    >
+                        <Printer size={18} /> REIMPRIMIR CUPOM
+                    </button>
                 </div>
               )}
               <div className="mt-8 text-sm opacity-70">Fechando em 5 segundos...</div>
