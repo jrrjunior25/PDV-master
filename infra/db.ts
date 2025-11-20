@@ -1,4 +1,4 @@
-import { Product, Sale, CartItem, PaymentMethod, User, FinancialRecord, AppSettings, Supplier, Carrier, ImportPreviewData, ImportItem, CashSession, CashMovement, Client, StockMovement } from '../../core/types';
+import { Product, Sale, CartItem, PaymentMethod, User, FinancialRecord, AppSettings, Supplier, Carrier, ImportPreviewData, ImportItem, CashSession, CashMovement, Client, StockMovement } from '../core/types';
 import { NfcService } from './services/nfcService';
 
 const DB_KEY = 'mercadomaster_sql_dump_v1';
