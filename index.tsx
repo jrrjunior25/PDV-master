@@ -1,7 +1,7 @@
 
 import React from 'react';
 import ReactDOM from 'react-dom/client';
-import App from './ui/App';
+import App from './ui/App'; // Using App from ui directory
 
 const rootElement = document.getElementById('root');
 if (!rootElement) {

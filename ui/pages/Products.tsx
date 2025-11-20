@@ -773,7 +773,16 @@ export const Products: React.FC = () => {
                                           <span className={`px-2 py-1 rounded text-[10px] font-bold uppercase ${
                                               move.quantity > 0 ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'
                                           }`}>
-                                              {move.type === 'SALE' ? 'VENDA' : move.type === 'ENTRY_XML' ? 'ENTRADA XML' : move.type === 'MANUAL_ADJUST' ? 'AJUSTE' : move.type}
+                                              {(() => {
+                                                  switch (move.type) {
+                                                      case 'SALE': return 'VENDA';
+                                                      case 'ENTRY_XML': return 'ENTRADA XML';
+                                                      case 'MANUAL_ADJUST': return 'AJUSTE MANUAL';
+                                                      case 'LOSS': return 'PERDA/QUEBRA';
+                                                      case 'RETURN': return 'DEVOLUÇÃO';
+                                                      default: return move.type;
+                                                  }
+                                              })()}
                                           </span>
                                       </td>
                                       <td className="px-6 py-3 text-sm">{move.description}</td>

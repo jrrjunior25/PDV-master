@@ -117,7 +117,7 @@ export class NfcService {
 
     const tPag = payMap[paymentMethod] || '99';
 
-    return `<?xml version="1.0" encoding="UTF-8"?>
+    const xml = `<?xml version="1.0" encoding="UTF-8"?>
 <NFe xmlns="http://www.portalfiscal.inf.br/nfe">
     <infNFe Id="NFe${accessKey}" versao="4.00">
         <ide>
@@ -195,39 +195,135 @@ export class NfcService {
             <infCpl>Val Aprox Trib R$ ${(total * 0.18).toFixed(2)} (18%) Fonte: IBPT</infCpl>
         </infAdic>
     </infNFe>
+</NFe>`;
+
+    return this.signXML(xml, settings.certificateData || '');
+  }
+
+  private signXML(xml: string, certificateData: string): string {
+      // NOTE: Real XML Signing (XMLDSig) requires a specialized library like 'xml-crypto' or a backend service.
+      // Browsers cannot easily access the private key from a .pfx/certificate without external helpers or WebCrypto API wrappers.
+      // This is a PLACEHOLDER for the signed XML structure.
+
+      if (!certificateData) {
+          console.warn("Certificado Digital não configurado. O XML não foi assinado.");
+          return xml;
+      }
+
+      // Em um cenário real, aqui usaríamos o certificado para assinar a tag <infNFe>
+      // Como não temos acesso a libs de backend aqui, simularemos a tag de assinatura.
+
+      const signedXml = xml.replace('</NFe>', `
     <Signature xmlns="http://www.w3.org/2000/09/xmldsig#">
         <SignedInfo>
             <CanonicalizationMethod Algorithm="http://www.w3.org/TR/2001/REC-xml-c14n-20010315" />
             <SignatureMethod Algorithm="http://www.w3.org/2000/09/xmldsig#rsa-sha1" />
-            <Reference URI="#NFe${accessKey}">
+            <Reference URI="#NFe${xml.match(/Id="NFe(\d+)"/)?.[1] || ''}">
+                <Transforms>
+                    <Transform Algorithm="http://www.w3.org/2000/09/xmldsig#enveloped-signature"/>
+                    <Transform Algorithm="http://www.w3.org/TR/2001/REC-xml-c14n-20010315"/>
+                </Transforms>
                 <DigestMethod Algorithm="http://www.w3.org/2000/09/xmldsig#sha1" />
-                <DigestValue>SIMULATED_DIGEST_VALUE_BASE64==</DigestValue>
+                <DigestValue>BASE64_DIGEST_PLACEHOLDER</DigestValue>
             </Reference>
         </SignedInfo>
-        <SignatureValue>SIMULATED_RSA_SIGNATURE_CONTENT_FOR_BROWSER_DEMO==</SignatureValue>
+        <SignatureValue>BASE64_SIGNATURE_PLACEHOLDER_USING_CERTIFICATE</SignatureValue>
+        <KeyInfo>
+            <X509Data>
+                <X509Certificate>${certificateData}</X509Certificate>
+            </X509Data>
+        </KeyInfo>
     </Signature>
-</NFe>`;
+</NFe>`);
+
+      return signedXml;
   }
 
   public async transmitNFCe(xml: string, settings: AppSettings): Promise<{ success: boolean, protocol: string, message: string }> {
-    return new Promise((resolve) => {
-      setTimeout(() => {
-        if (settings.environment === 'HOMOLOGACAO') {
-            const protocolo = `135${new Date().getFullYear()}${Math.floor(Math.random() * 1000000000)}`;
-            resolve({
-                success: true,
-                protocol: protocolo,
-                message: 'Autorizado o uso da NF-e'
-            });
-        } else {
-             const protocolo = `135${new Date().getFullYear()}${Math.floor(Math.random() * 1000000000)}`;
-             resolve({
-                success: true,
-                protocol: protocolo,
-                message: 'Autorizado o uso da NF-e (SIMULAÇÃO PRODUÇÃO)'
-            });
+    // URLs reais da SEFAZ (Exemplo: SVRS - Sefaz Virtual RS, usada por vários estados)
+    // Em produção real, cada estado pode ter sua URL específica (SP, PR, etc.)
+    const SEFAZ_URLS = {
+        HOMOLOGACAO: "https://nfce-homologacao.svrs.rs.gov.br/ws/NfeAutorizacao/NFeAutorizacao4.asmx",
+        PRODUCAO: "https://nfce.svrs.rs.gov.br/ws/NfeAutorizacao/NFeAutorizacao4.asmx"
+    };
+
+    const url = settings.environment === 'PRODUCAO' ? SEFAZ_URLS.PRODUCAO : SEFAZ_URLS.HOMOLOGACAO;
+
+    // SOAP Envelope structure
+    const soapEnvelope = `
+<soap:Envelope xmlns:soap="http://www.w3.org/2003/05/soap-envelope" xmlns:nfe="http://www.portalfiscal.inf.br/nfe/wsdl/NFeAutorizacao4">
+    <soap:Header/>
+    <soap:Body>
+        <nfe:nfeDadosMsg>
+            ${xml}
+        </nfe:nfeDadosMsg>
+    </soap:Body>
+</soap:Envelope>`;
+
+    try {
+        // NOTE: SEFAZ generally blocks CORS (Cross-Origin Resource Sharing).
+        // This request will likely fail if called directly from a browser without a Proxy.
+        // In a real production env, you should point this to a local backend proxy (e.g. http://localhost:8080/sefaz-proxy)
+
+        console.log(`Enviando para SEFAZ (${settings.environment}):`, url);
+
+        const response = await fetch(url, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/soap+xml; charset=utf-8',
+                // SOAPAction usually required for older SOAP services, but NFe 4.0 uses straight post usually or specific header
+            },
+            body: soapEnvelope
+        });
+
+        if (!response.ok) {
+            throw new Error(`Erro HTTP: ${response.status} - ${response.statusText}`);
         }
-      }, 1500);
-    });
+
+        const responseText = await response.text();
+
+        // Parse XML Response (Simplified logic)
+        const parser = new DOMParser();
+        const xmlDoc = parser.parseFromString(responseText, "text/xml");
+
+        const cStat = xmlDoc.getElementsByTagName("cStat")[0]?.textContent;
+        const xMotivo = xmlDoc.getElementsByTagName("xMotivo")[0]?.textContent;
+        const nProt = xmlDoc.getElementsByTagName("nProt")[0]?.textContent;
+
+        if (cStat === '100') { // 100 = Autorizado
+             return {
+                 success: true,
+                 protocol: nProt || 'PROT-UNKNOWN',
+                 message: xMotivo || 'Autorizado com sucesso'
+             };
+        } else {
+             return {
+                 success: false,
+                 protocol: '',
+                 message: `Rejeição (${cStat}): ${xMotivo}`
+             };
+        }
+
+    } catch (error: any) {
+        console.error("Erro de Transmissão SEFAZ:", error);
+
+        // Fallback to simulation if configured to do so, or strict failure
+        // For this "adjustment", we return the error to reflect real usage attempts.
+
+        // If strictly needing to work in this demo environment without a proxy, we might fallback:
+        if (error.message.includes("Failed to fetch") || error.name === 'TypeError') {
+             return {
+                 success: false,
+                 protocol: '',
+                 message: "Erro de Conexão: Provável bloqueio CORS da SEFAZ ou Falha de Rede. (Necessário Proxy Backend)"
+             };
+        }
+
+        return {
+            success: false,
+            protocol: '',
+            message: `Erro interno: ${error.message}`
+        };
+    }
   }
 }
