@@ -1,5 +1,6 @@
 import { Product, Sale, CartItem, PaymentMethod, User, FinancialRecord, AppSettings, Supplier, Carrier, ImportPreviewData, ImportItem, CashSession, CashMovement, Client, StockMovement } from '../core/types';
 import { NfcService } from './services/nfcService';
+import { PixService } from './services/pixService';
 
 const DB_KEY = 'mercadomaster_sql_dump_v1';
 const SESSION_KEY = 'mercadomaster_session';
@@ -46,6 +47,7 @@ const getTagValue = (element: Element | null | undefined, tagName: string): stri
 };
 
 const nfcService = new NfcService();
+const pixService = new PixService();
 let isInitialized = false;
 
 const TABLE_LIST = [
@@ -555,6 +557,14 @@ export const db = {
   saveClient: (c: Client) => { runSql("DELETE FROM clients WHERE id = ?", [c.id]); runSql("INSERT INTO clients VALUES ?", [c]); saveDb(); },
   logStockMovement: (m: any) => { runSql("INSERT INTO stock_movements VALUES ?", [{...m, id: crypto.randomUUID(), timestamp: Date.now(), userId: db.auth.getSession()?.name || 'System'}]); saveDb(); },
   getStockMovements: (pid?: string) => { let s = "SELECT * FROM stock_movements"; if(pid) s+=` WHERE productId='${pid}'`; s+=" ORDER BY timestamp DESC"; return runSql(s); },
+
+  pix: {
+      checkStatus: async (txId: string) => {
+          const settings = db.getSettings();
+          return await pixService.checkPaymentStatus(txId, settings);
+      }
+  },
+
   auth: {
       login: (uid: string, pin: string) => { const u = runSql("SELECT * FROM users WHERE id = ? AND pin = ?", [uid, pin]); if(u.length) { localStorage.setItem(SESSION_KEY, JSON.stringify(u[0])); return u[0]; } return null; },
       logout: () => localStorage.removeItem(SESSION_KEY),
