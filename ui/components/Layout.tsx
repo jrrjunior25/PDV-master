@@ -1,7 +1,7 @@
 
 import React from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
-import { LayoutGrid, Package, ShoppingCart, TrendingUp, Users, BarChart2, DollarSign, LogOut, Menu, Settings, UserCircle, Heart } from 'lucide-react';
+import { LayoutGrid, Package, ShoppingCart, TrendingUp, Users, BarChart2, DollarSign, LogOut, Menu, Settings, UserCircle, Heart, BookOpen } from 'lucide-react';
 import { db } from '../../infra/db';
 
 interface LayoutProps {
@@ -66,6 +66,7 @@ export const Layout: React.FC<LayoutProps> = ({ children }) => {
                 <SidebarItem to="/clients" icon={Heart} label="Clientes & Fidelidade" active={location.pathname === '/clients'} />
                 <SidebarItem to="/sales" icon={TrendingUp} label="Vendas Realizadas" active={location.pathname === '/sales'} />
                 <SidebarItem to="/financial" icon={DollarSign} label="Financeiro" active={location.pathname === '/financial'} />
+                <SidebarItem to="/accounting" icon={BookOpen} label="Contabilidade" active={location.pathname.startsWith('/accounting')} />
                 <SidebarItem to="/reports" icon={BarChart2} label="Relatórios" active={location.pathname === '/reports'} />
                 <SidebarItem to="/users" icon={Users} label="Usuários do Sistema" active={location.pathname === '/users'} />
                 <SidebarItem to="/settings" icon={Settings} label="Configurações" active={location.pathname === '/settings'} />

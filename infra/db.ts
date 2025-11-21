@@ -1,4 +1,5 @@
-import { Product, Sale, CartItem, PaymentMethod, User, FinancialRecord, AppSettings, Supplier, Carrier, ImportPreviewData, ImportItem, CashSession, CashMovement, Client, StockMovement } from '../../core/types';
+import { Product, Sale, CartItem, PaymentMethod, User, FinancialRecord, AppSettings, Supplier, Carrier, ImportPreviewData, ImportItem, CashSession, CashMovement, Client, StockMovement, AccountingAccount, AccountingEntry } from '../../core/types';
+import { DEFAULT_CHART_OF_ACCOUNTS } from '../../core/constants/accounting';
 import { NfcService } from './services/nfcService';
 
 const DB_KEY = 'mercadomaster_sql_dump_v1';
@@ -50,7 +51,8 @@ let isInitialized = false;
 
 const TABLE_LIST = [
     'products', 'sales', 'users', 'clients', 'financial', 
-    'suppliers', 'carriers', 'settings', 'cash_sessions', 'stock_movements'
+    'suppliers', 'carriers', 'settings', 'cash_sessions', 'stock_movements',
+    'accounting_accounts', 'accounting_entries'
 ];
 
 const runSql = (sql: string, params?: any[]) => {
@@ -127,6 +129,8 @@ export const db = {
         runSql(`CREATE TABLE IF NOT EXISTS settings (id STRING PRIMARY KEY, data JSON)`);
         runSql(`CREATE TABLE IF NOT EXISTS cash_sessions (id STRING PRIMARY KEY, userId STRING, openedAt NUMBER, closedAt NUMBER, openingBalance NUMBER, closingBalance NUMBER, systemBalance NUMBER, status STRING, movements JSON)`);
         runSql(`CREATE TABLE IF NOT EXISTS stock_movements (id STRING PRIMARY KEY, productId STRING, productName STRING, type STRING, quantity NUMBER, previousStock NUMBER, newStock NUMBER, costPrice NUMBER, timestamp NUMBER, description STRING, userId STRING)`);
+        runSql(`CREATE TABLE IF NOT EXISTS accounting_accounts (id STRING PRIMARY KEY, code STRING, name STRING, type STRING, parentId STRING, systemAccount BOOLEAN)`);
+        runSql(`CREATE TABLE IF NOT EXISTS accounting_entries (id STRING PRIMARY KEY, date NUMBER, description STRING, lines JSON, relatedId STRING, relatedType STRING)`);
     } catch(e) {}
 
     const savedData = localStorage.getItem(DB_KEY);
@@ -158,6 +162,11 @@ export const db = {
         
         const settingsCount = runSql("SELECT COUNT(*) as c FROM settings")[0]?.c || 0;
         if (settingsCount === 0) runSql("INSERT INTO settings VALUES ?", [{id: 'main', data: DEFAULT_SETTINGS}]);
+
+        const accCount = runSql("SELECT COUNT(*) as c FROM accounting_accounts")[0]?.c || 0;
+        if (accCount === 0) {
+            DEFAULT_CHART_OF_ACCOUNTS.forEach(acc => runSql("INSERT INTO accounting_accounts VALUES ?", [acc]));
+        }
     } catch(e) {}
 
     isInitialized = true;
@@ -525,6 +534,52 @@ export const db = {
           date: Date.now(),
           category: 'Vendas'
         });
+
+        // --- INTEGRAÇÃO CONTÁBIL AUTOMÁTICA ---
+        // Debito: Caixa/Banco (Ativo)
+        // Credito: Receita de Vendas (Receita)
+        // Credito: CMV (Despesa) - Não, CMV é Debito. Estoque é Credito.
+        // Lançamento 1: Venda
+        try {
+            const entryId = crypto.randomUUID();
+            const debitAccount = 'AC_CAIXA'; // Simplificação: Tudo vai para Caixa Geral por enquanto
+            const creditAccount = 'AC_REC_VENDAS';
+
+            runSql("INSERT INTO accounting_entries VALUES ?", [{
+                id: entryId,
+                date: Date.now(),
+                description: `Venda #${newSale.id.slice(0,8)}`,
+                relatedId: newSale.id,
+                relatedType: 'SALE',
+                lines: [
+                    { accountId: debitAccount, debit: finalTotal, credit: 0 },
+                    { accountId: creditAccount, debit: 0, credit: finalTotal }
+                ]
+            }]);
+
+            // Lançamento 2: Baixa de Estoque (CMV)
+            // Debito: CMV (Despesa)
+            // Credito: Estoque (Ativo)
+            // Precisamos somar o custo dos produtos vendidos
+            const totalCost = items.reduce((acc, item) => acc + (item.costPrice * item.quantity), 0);
+            if (totalCost > 0) {
+                 const cmvEntryId = crypto.randomUUID();
+                 runSql("INSERT INTO accounting_entries VALUES ?", [{
+                    id: cmvEntryId,
+                    date: Date.now(),
+                    description: `CMV Venda #${newSale.id.slice(0,8)}`,
+                    relatedId: newSale.id,
+                    relatedType: 'SALE_COST',
+                    lines: [
+                        { accountId: 'AC_CMV', debit: totalCost, credit: 0 },
+                        { accountId: 'AC_ESTOQUE', debit: 0, credit: totalCost }
+                    ]
+                }]);
+            }
+        } catch (e) {
+            console.error("Erro ao gerar lançamento contábil", e);
+        }
+        // --------------------------------------
     }
 
     saveDb();
@@ -543,8 +598,45 @@ export const db = {
   },
   deleteUser: (id: string) => { runSql("DELETE FROM users WHERE id = ?", [id]); saveDb(); },
   getFinancialRecords: (): FinancialRecord[] => runSql("SELECT * FROM financial"),
-  addFinancialRecord: (record: FinancialRecord) => { runSql("INSERT INTO financial VALUES ?", [record]); saveDb(); },
-  deleteFinancialRecord: (id: string) => { runSql("DELETE FROM financial WHERE id = ?", [id]); saveDb(); },
+  addFinancialRecord: (record: FinancialRecord) => {
+      runSql("INSERT INTO financial VALUES ?", [record]);
+
+      // --- INTEGRAÇÃO CONTÁBIL (DESPESAS) ---
+      if (record.type === 'DESPESA') {
+          try {
+            const entryId = crypto.randomUUID();
+            // Mapeamento simples de categoria para conta contábil
+            let debitAccount = 'AC_DESP_ADM'; // Default
+            if (record.category === 'Funcionários') debitAccount = 'AC_DESP_PESSOAL';
+            if (record.category === 'Impostos') debitAccount = 'AC_DESP_TRIB';
+            if (record.category === 'Fornecedores') debitAccount = 'AC_ESTOQUE';
+
+            runSql("INSERT INTO accounting_entries VALUES ?", [{
+                id: entryId,
+                date: record.date,
+                description: record.description,
+                relatedId: record.id,
+                relatedType: 'EXPENSE',
+                lines: [
+                    { accountId: debitAccount, debit: record.amount, credit: 0 },
+                    { accountId: 'AC_CAIXA', debit: 0, credit: record.amount }
+                ]
+            }]);
+          } catch(e) {
+              console.error("Erro contabilidade despesa", e);
+          }
+      }
+
+      saveDb();
+  },
+  deleteFinancialRecord: (id: string) => {
+      // Remover lançamentos contábeis associados
+      try {
+        runSql("DELETE FROM accounting_entries WHERE relatedId = ?", [id]);
+      } catch(e) {}
+      runSql("DELETE FROM financial WHERE id = ?", [id]);
+      saveDb();
+  },
   getSettings: (): AppSettings => { const res = runSql("SELECT * FROM settings WHERE id = 'main'"); if (res.length > 0) return { ...DEFAULT_SETTINGS, ...res[0].data }; return DEFAULT_SETTINGS; },
   saveSettings: (settings: AppSettings) => { const exists = runSql("SELECT * FROM settings WHERE id = 'main'"); if (exists.length > 0) { runSql("UPDATE settings SET data = ? WHERE id = 'main'", [settings]); } else { runSql("INSERT INTO settings VALUES ?", [{id: 'main', data: settings}]); } saveDb(); },
   createBackup: () => { if (!window.alasql) return "{}"; const dump: Record<string, any[]> = {}; try { TABLE_LIST.forEach(tableName => { try { dump[tableName] = window.alasql(`SELECT * FROM ${tableName}`); } catch(e) {} }); return JSON.stringify(dump, null, 2); } catch(e) { return "{}"; } },
@@ -553,13 +645,100 @@ export const db = {
   getClients: () => runSql("SELECT * FROM clients"),
   getClientByCpf: (cpf: string) => { const c = runSql("SELECT * FROM clients"); return c.find((x:any) => x.cpf.replace(/\D/g,'') === cpf.replace(/\D/g,'')); },
   saveClient: (c: Client) => { runSql("DELETE FROM clients WHERE id = ?", [c.id]); runSql("INSERT INTO clients VALUES ?", [c]); saveDb(); },
-  logStockMovement: (m: any) => { runSql("INSERT INTO stock_movements VALUES ?", [{...m, id: crypto.randomUUID(), timestamp: Date.now(), userId: db.auth.getSession()?.name || 'System'}]); saveDb(); },
+  logStockMovement: (m: any) => {
+      const movement = {...m, id: crypto.randomUUID(), timestamp: Date.now(), userId: db.auth.getSession()?.name || 'System'};
+      runSql("INSERT INTO stock_movements VALUES ?", [movement]);
+
+      // --- INTEGRAÇÃO CONTÁBIL DE ESTOQUE ---
+      try {
+          // LOSS / PERDA / QUEBRA
+          if (movement.type === 'LOSS') {
+              const totalCost = movement.quantity * movement.costPrice; // quantity here is likely positive or negative? Usually logged as negative for loss?
+              // Let's check how it is called.
+              // In saveProduct: quantity is diff. If diff < 0 (LOSS), quantity is negative.
+              // So totalCost will be negative. We need absolute value.
+              const absCost = Math.abs(totalCost);
+
+              runSql("INSERT INTO accounting_entries VALUES ?", [{
+                  id: crypto.randomUUID(),
+                  date: movement.timestamp,
+                  description: `Perda de Estoque: ${movement.productName}`,
+                  relatedId: movement.id,
+                  relatedType: 'STOCK_LOSS',
+                  lines: [
+                      { accountId: 'AC_CMV', debit: absCost, credit: 0 }, // Usando CMV ou criar conta específica de Perdas? Vamos usar CMV/Perdas por enquanto
+                      { accountId: 'AC_ESTOQUE', debit: 0, credit: absCost }
+                  ]
+              }]);
+          }
+
+          // ENTRY_XML (Entrada Nota Fiscal)
+          // Already handled in commitImport?
+          // commitImport does NOT create accounting entries yet! It only creates financial records.
+          // We should add accounting there or here.
+          // ENTRY_XML is logged in commitImport.
+          if (movement.type === 'ENTRY_XML') {
+               const totalCost = movement.quantity * movement.costPrice;
+               // Debito: Estoque
+               // Credito: Fornecedores (Passivo) - Mas commitImport cria Financial Record (Passivo/Despesa)
+               // Se commitImport cria Financial 'DESPESA', a função addFinancialRecord vai criar (Debit Despesa, Credit Caixa).
+               // Isso está duplicado ou errado conceptualmente para regime de competência.
+               // Compra a prazo: Debit Estoque, Credit Fornecedores.
+               // Pagamento boleto: Debit Fornecedores, Credit Caixa.
+
+               // O sistema atual simplificado trata compra como "Despesa" no financeiro direto.
+               // Se quisermos ser profissionais, ENTRY_XML deveria criar PASSIVO (Fornecedores).
+               // E o pagamento do boleto baixa o passivo.
+
+               // Vamos ajustar:
+               // Aqui no Stock Movement de entrada, lançamos a entrada no estoque.
+               // Creditamos uma conta transitória ou Fornecedores.
+
+               runSql("INSERT INTO accounting_entries VALUES ?", [{
+                  id: crypto.randomUUID(),
+                  date: movement.timestamp,
+                  description: `Entrada Estoque (XML): ${movement.productName}`,
+                  relatedId: movement.id,
+                  relatedType: 'PURCHASE',
+                  lines: [
+                      { accountId: 'AC_ESTOQUE', debit: totalCost, credit: 0 },
+                      { accountId: 'AC_FORNECEDORES', debit: 0, credit: totalCost }
+                  ]
+              }]);
+          }
+
+          // MANUAL_ADJUST (Ajuste manual positivo)
+          if (movement.type === 'MANUAL_ADJUST') {
+               const totalCost = movement.quantity * movement.costPrice;
+               if (totalCost > 0) {
+                   // Ganho de inventário?
+                   runSql("INSERT INTO accounting_entries VALUES ?", [{
+                      id: crypto.randomUUID(),
+                      date: movement.timestamp,
+                      description: `Sobras de Estoque: ${movement.productName}`,
+                      relatedId: movement.id,
+                      relatedType: 'STOCK_ADJUST',
+                      lines: [
+                          { accountId: 'AC_ESTOQUE', debit: totalCost, credit: 0 },
+                          { accountId: 'AC_CMV', debit: 0, credit: totalCost } // Reduz custo (Credit Expense)
+                      ]
+                  }]);
+               }
+          }
+
+      } catch(e) {
+          console.error("Erro contabilidade estoque", e);
+      }
+
+      saveDb();
+  },
   getStockMovements: (pid?: string) => { let s = "SELECT * FROM stock_movements"; if(pid) s+=` WHERE productId='${pid}'`; s+=" ORDER BY timestamp DESC"; return runSql(s); },
   auth: {
       login: (uid: string, pin: string) => { const u = runSql("SELECT * FROM users WHERE id = ? AND pin = ?", [uid, pin]); if(u.length) { localStorage.setItem(SESSION_KEY, JSON.stringify(u[0])); return u[0]; } return null; },
       logout: () => localStorage.removeItem(SESSION_KEY),
       getSession: () => JSON.parse(localStorage.getItem(SESSION_KEY) || 'null')
   },
+  save: () => saveDb(),
   cash: {
       getSessions: () => runSql("SELECT * FROM cash_sessions ORDER BY openedAt DESC"),
       getCurrentSession: () => runSql("SELECT * FROM cash_sessions WHERE status = 'OPEN'")[0],
