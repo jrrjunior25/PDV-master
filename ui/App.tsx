@@ -15,6 +15,7 @@ import { AccountingDashboard } from './pages/Accounting/AccountingDashboard';
 import { ChartOfAccounts } from './pages/Accounting/ChartOfAccounts';
 import { DRE } from './pages/Accounting/Reports/DRE';
 import { TrialBalance } from './pages/Accounting/Reports/TrialBalance';
+import { JournalEntryForm } from './pages/Accounting/JournalEntryForm';
 import { db } from '../infra/db';
 import { User } from '../core/types';
 
@@ -75,6 +76,7 @@ const AppContent: React.FC = () => {
           <Route path="/financial" element={<ProtectedRoute allowedRoles={['ADMIN']}><Financial /></ProtectedRoute>} />
 
           <Route path="/accounting" element={<ProtectedRoute allowedRoles={['ADMIN']}><AccountingDashboard /></ProtectedRoute>} />
+          <Route path="/accounting/entries" element={<ProtectedRoute allowedRoles={['ADMIN']}><JournalEntryForm /></ProtectedRoute>} />
           <Route path="/accounting/chart" element={<ProtectedRoute allowedRoles={['ADMIN']}><ChartOfAccounts /></ProtectedRoute>} />
           <Route path="/accounting/dre" element={<ProtectedRoute allowedRoles={['ADMIN']}><DRE /></ProtectedRoute>} />
           <Route path="/accounting/balance" element={<ProtectedRoute allowedRoles={['ADMIN']}><TrialBalance /></ProtectedRoute>} />

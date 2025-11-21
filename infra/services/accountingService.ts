@@ -26,16 +26,12 @@ export const accountingService = {
         } else {
             runQuery("INSERT INTO accounting_accounts VALUES ?", [account]);
         }
-        // Trigger saveDB logic indirectly or directly if exposed.
-        // Since I can't call saveDb from here easily without circular deps or exposing it,
-        // I will assume the UI will trigger a save or I should modify db.ts to expose a generic save.
-        // For now, let's rely on localStorage sync happens eventually or add a method to db.ts.
-        // Actually, db.ts listens to nothing. I need to update db.ts to include these methods to ensure persistence.
-        // Ideally, I should have put this logic INSIDE db.ts to reuse `saveDb`.
+        db.save();
     },
 
     deleteAccount: (id: string) => {
         runQuery("DELETE FROM accounting_accounts WHERE id = ?", [id]);
+        db.save();
     },
 
     getEntries: (startDate: number, endDate: number): AccountingEntry[] => {
@@ -44,6 +40,7 @@ export const accountingService = {
 
     addEntry: (entry: AccountingEntry) => {
         runQuery("INSERT INTO accounting_entries VALUES ?", [entry]);
+        db.save();
     },
 
     // Relatório: Balancete

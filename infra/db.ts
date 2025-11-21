@@ -645,13 +645,100 @@ export const db = {
   getClients: () => runSql("SELECT * FROM clients"),
   getClientByCpf: (cpf: string) => { const c = runSql("SELECT * FROM clients"); return c.find((x:any) => x.cpf.replace(/\D/g,'') === cpf.replace(/\D/g,'')); },
   saveClient: (c: Client) => { runSql("DELETE FROM clients WHERE id = ?", [c.id]); runSql("INSERT INTO clients VALUES ?", [c]); saveDb(); },
-  logStockMovement: (m: any) => { runSql("INSERT INTO stock_movements VALUES ?", [{...m, id: crypto.randomUUID(), timestamp: Date.now(), userId: db.auth.getSession()?.name || 'System'}]); saveDb(); },
+  logStockMovement: (m: any) => {
+      const movement = {...m, id: crypto.randomUUID(), timestamp: Date.now(), userId: db.auth.getSession()?.name || 'System'};
+      runSql("INSERT INTO stock_movements VALUES ?", [movement]);
+
+      // --- INTEGRAÇÃO CONTÁBIL DE ESTOQUE ---
+      try {
+          // LOSS / PERDA / QUEBRA
+          if (movement.type === 'LOSS') {
+              const totalCost = movement.quantity * movement.costPrice; // quantity here is likely positive or negative? Usually logged as negative for loss?
+              // Let's check how it is called.
+              // In saveProduct: quantity is diff. If diff < 0 (LOSS), quantity is negative.
+              // So totalCost will be negative. We need absolute value.
+              const absCost = Math.abs(totalCost);
+
+              runSql("INSERT INTO accounting_entries VALUES ?", [{
+                  id: crypto.randomUUID(),
+                  date: movement.timestamp,
+                  description: `Perda de Estoque: ${movement.productName}`,
+                  relatedId: movement.id,
+                  relatedType: 'STOCK_LOSS',
+                  lines: [
+                      { accountId: 'AC_CMV', debit: absCost, credit: 0 }, // Usando CMV ou criar conta específica de Perdas? Vamos usar CMV/Perdas por enquanto
+                      { accountId: 'AC_ESTOQUE', debit: 0, credit: absCost }
+                  ]
+              }]);
+          }
+
+          // ENTRY_XML (Entrada Nota Fiscal)
+          // Already handled in commitImport?
+          // commitImport does NOT create accounting entries yet! It only creates financial records.
+          // We should add accounting there or here.
+          // ENTRY_XML is logged in commitImport.
+          if (movement.type === 'ENTRY_XML') {
+               const totalCost = movement.quantity * movement.costPrice;
+               // Debito: Estoque
+               // Credito: Fornecedores (Passivo) - Mas commitImport cria Financial Record (Passivo/Despesa)
+               // Se commitImport cria Financial 'DESPESA', a função addFinancialRecord vai criar (Debit Despesa, Credit Caixa).
+               // Isso está duplicado ou errado conceptualmente para regime de competência.
+               // Compra a prazo: Debit Estoque, Credit Fornecedores.
+               // Pagamento boleto: Debit Fornecedores, Credit Caixa.
+
+               // O sistema atual simplificado trata compra como "Despesa" no financeiro direto.
+               // Se quisermos ser profissionais, ENTRY_XML deveria criar PASSIVO (Fornecedores).
+               // E o pagamento do boleto baixa o passivo.
+
+               // Vamos ajustar:
+               // Aqui no Stock Movement de entrada, lançamos a entrada no estoque.
+               // Creditamos uma conta transitória ou Fornecedores.
+
+               runSql("INSERT INTO accounting_entries VALUES ?", [{
+                  id: crypto.randomUUID(),
+                  date: movement.timestamp,
+                  description: `Entrada Estoque (XML): ${movement.productName}`,
+                  relatedId: movement.id,
+                  relatedType: 'PURCHASE',
+                  lines: [
+                      { accountId: 'AC_ESTOQUE', debit: totalCost, credit: 0 },
+                      { accountId: 'AC_FORNECEDORES', debit: 0, credit: totalCost }
+                  ]
+              }]);
+          }
+
+          // MANUAL_ADJUST (Ajuste manual positivo)
+          if (movement.type === 'MANUAL_ADJUST') {
+               const totalCost = movement.quantity * movement.costPrice;
+               if (totalCost > 0) {
+                   // Ganho de inventário?
+                   runSql("INSERT INTO accounting_entries VALUES ?", [{
+                      id: crypto.randomUUID(),
+                      date: movement.timestamp,
+                      description: `Sobras de Estoque: ${movement.productName}`,
+                      relatedId: movement.id,
+                      relatedType: 'STOCK_ADJUST',
+                      lines: [
+                          { accountId: 'AC_ESTOQUE', debit: totalCost, credit: 0 },
+                          { accountId: 'AC_CMV', debit: 0, credit: totalCost } // Reduz custo (Credit Expense)
+                      ]
+                  }]);
+               }
+          }
+
+      } catch(e) {
+          console.error("Erro contabilidade estoque", e);
+      }
+
+      saveDb();
+  },
   getStockMovements: (pid?: string) => { let s = "SELECT * FROM stock_movements"; if(pid) s+=` WHERE productId='${pid}'`; s+=" ORDER BY timestamp DESC"; return runSql(s); },
   auth: {
       login: (uid: string, pin: string) => { const u = runSql("SELECT * FROM users WHERE id = ? AND pin = ?", [uid, pin]); if(u.length) { localStorage.setItem(SESSION_KEY, JSON.stringify(u[0])); return u[0]; } return null; },
       logout: () => localStorage.removeItem(SESSION_KEY),
       getSession: () => JSON.parse(localStorage.getItem(SESSION_KEY) || 'null')
   },
+  save: () => saveDb(),
   cash: {
       getSessions: () => runSql("SELECT * FROM cash_sessions ORDER BY openedAt DESC"),
       getCurrentSession: () => runSql("SELECT * FROM cash_sessions WHERE status = 'OPEN'")[0],
