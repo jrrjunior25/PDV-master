@@ -189,3 +189,31 @@ export interface ImportPreviewData {
   items: ImportItem[];
   finance: ImportFinanceData;
 }
+
+// --- CONTABILIDADE ---
+
+export type AccountType = 'ASSET' | 'LIABILITY' | 'EQUITY' | 'REVENUE' | 'EXPENSE';
+
+export interface AccountingAccount {
+  id: string;
+  code: string;
+  name: string;
+  type: AccountType;
+  parentId: string | null;
+  systemAccount?: boolean; // Se true, não pode ser deletada (Ex: Caixa, Vendas)
+}
+
+export interface AccountingEntryLine {
+  accountId: string;
+  debit: number;
+  credit: number;
+}
+
+export interface AccountingEntry {
+  id: string;
+  date: number;
+  description: string;
+  lines: AccountingEntryLine[];
+  relatedId?: string;
+  relatedType?: 'SALE' | 'EXPENSE' | 'MANUAL' | 'PURCHASE' | 'OPENING';
+}

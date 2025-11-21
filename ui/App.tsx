@@ -11,6 +11,10 @@ import { Reports } from './pages/Reports';
 import { SettingsPage } from './pages/Settings';
 import { Clients } from './pages/Clients';
 import { Login } from './pages/Login';
+import { AccountingDashboard } from './pages/Accounting/AccountingDashboard';
+import { ChartOfAccounts } from './pages/Accounting/ChartOfAccounts';
+import { DRE } from './pages/Accounting/Reports/DRE';
+import { TrialBalance } from './pages/Accounting/Reports/TrialBalance';
 import { db } from '../infra/db';
 import { User } from '../core/types';
 
@@ -69,6 +73,12 @@ const AppContent: React.FC = () => {
           <Route path="/users" element={<ProtectedRoute allowedRoles={['ADMIN']}><Users /></ProtectedRoute>} />
           <Route path="/clients" element={<ProtectedRoute allowedRoles={['ADMIN']}><Clients /></ProtectedRoute>} />
           <Route path="/financial" element={<ProtectedRoute allowedRoles={['ADMIN']}><Financial /></ProtectedRoute>} />
+
+          <Route path="/accounting" element={<ProtectedRoute allowedRoles={['ADMIN']}><AccountingDashboard /></ProtectedRoute>} />
+          <Route path="/accounting/chart" element={<ProtectedRoute allowedRoles={['ADMIN']}><ChartOfAccounts /></ProtectedRoute>} />
+          <Route path="/accounting/dre" element={<ProtectedRoute allowedRoles={['ADMIN']}><DRE /></ProtectedRoute>} />
+          <Route path="/accounting/balance" element={<ProtectedRoute allowedRoles={['ADMIN']}><TrialBalance /></ProtectedRoute>} />
+
           <Route path="/reports" element={<ProtectedRoute allowedRoles={['ADMIN']}><Reports /></ProtectedRoute>} />
           <Route path="/settings" element={<ProtectedRoute allowedRoles={['ADMIN']}><SettingsPage /></ProtectedRoute>} />
 
