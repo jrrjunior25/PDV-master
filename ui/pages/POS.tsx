@@ -254,6 +254,7 @@ export const POS: React.FC = () => {
       const newClient: Client = { id: crypto.randomUUID(), name: identifyName.toUpperCase(), cpf: identifyCpf, points: 0 };
       db.saveClient(newClient);
       setCurrentClient(newClient);
+      setIsNewClientMode(false);
       setIsIdentifyModalOpen(false);
   };
 
